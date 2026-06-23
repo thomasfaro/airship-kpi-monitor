@@ -1,11 +1,13 @@
 ---
 name: airship-kpi-monitor
 description: >-
-  Daily Airship KPI monitoring with rolling 7-day window comparison.
-  Detects significant variations in push, email, app, web push metrics and
-  custom events. Posts Slack alerts to a client channel and maintains a
-  weekly canvas summary. Uses the Airship Reports API via MCP and the Slack
-  MCP plugin. Designed to run as a Cursor Cloud Agent automation.
+  Daily Airship KPI monitoring with rolling 7-day window comparison, analysed
+  per OS (iOS / Android). Detects significant variations in app opens, time in
+  app, push sends/opt-outs, direct response rate (tracking-health signal),
+  opt-in velocity, email metrics, web push and custom events. Posts Slack
+  alerts to a client channel and maintains a rich, source-traceable weekly
+  canvas. Uses the Airship Reports API via MCP and the Slack MCP plugin.
+  Designed to run as a Cursor Cloud Agent automation.
 model: claude-sonnet
 # Always use the latest available Claude Sonnet version in the Cursor
 # Automations editor — do not pin a specific version number (e.g. 4-5, 4-6).
@@ -16,9 +18,11 @@ model: claude-sonnet
 # Airship KPI Monitor — Daily Rolling Window Check
 
 Monitor an Airship project's key metrics daily, comparing the **last 7 complete
-days (D-7 → D-1)** against the **previous 7 days (D-14 → D-8)**. Post a Slack
-alert only when a new anomaly is detected (anti-duplication via canvas state).
-Always update the weekly canvas with today's snapshot.
+days (D-7 → D-1)** against the **previous 7 days (D-14 → D-8)**. App and push
+KPIs are analysed **per OS (iOS / Android)** so a single-platform regression is
+never masked by the other platform's volume. Post a Slack alert only when a new
+anomaly is detected (anti-duplication via canvas state). Always update the
+weekly canvas with today's snapshot.
 
 ## Inputs (from the automation prompt)
 
@@ -33,10 +37,33 @@ Always update the weekly canvas with today's snapshot.
 | `Custom thresholds` | no — overrides defaults | `push_sends_drop_pct: 40` |
 
 `Brand name` is the **public-facing brand** used for web searches and news
-lookups in root cause analysis (Step 7b). Use the consumer-facing name rather
+lookups in root cause analysis (Step 8b). Use the consumer-facing name rather
 than the internal project name — e.g. `Banque Populaire` instead of `BP PROD`,
 `Burger King France` instead of `BK PROD`, `Harmonie Mutuelle` instead of
 `HM PROD`. If omitted, falls back to `Client name`.
+
+## Data sources (traceability reference)
+
+Every figure shown in Slack or the canvas MUST be traceable to the endpoint
+below. **Any alert flagging a problem must cite its source endpoint AND the
+denominator used.**
+
+| KPI | Source endpoint | Denominator / note |
+|---|---|---|
+| App opens (per OS) | `/api/reports/opens` | raw count |
+| Push sends (per OS) | `/api/reports/sends` | raw count |
+| Push opt-outs (per OS) | `/api/reports/optouts` | rate = opt-outs / push sends |
+| Opt-ins (per OS) | `/api/reports/optins` | raw count; net = opt-ins − opt-outs |
+| Direct response rate (per OS) | `/api/reports/responses` | rate = direct / push sends |
+| Time in app (per OS) | `/api/reports/timeinapp` | avg value/day returned by Airship |
+| Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
+| Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
+| Custom events | `/api/reports/events` | raw count |
+| Top campaigns (root cause only) | `/api/reports/responses/list` | per push |
+
+`influenced` responses are intentionally **ignored** — only `direct` responses
+are used (a collapse of the direct rate signals a tracking/SDK problem, not a
+real engagement change).
 
 ## Execution workflow
 
@@ -79,7 +106,8 @@ For each response, split the daily rows into two groups:
 - **current**: rows where date ∈ [current_window_start, current_window_end]
 - **previous**: rows where date ∈ [previous_window_start, previous_window_end]
 
-Then sum per platform for each group.
+Then sum **per platform** (`ios`, `android`, and `web` where present) for each
+group. Keep per-OS sums AND a total. Opt-ins are now actively used (Step 8).
 
 ### Step 2 — Fetch email system events (two separate 7-day calls)
 
@@ -120,19 +148,42 @@ isolate events where `location = custom` AND name ∉ {`injection`, `delivery`,
 
 These are **client custom events** (app behaviour, conversions, etc.).
 
-### Step 4 — Fetch push click rate
+### Step 4 — Fetch direct responses (per OS)
+
+Use the aggregate daily response report (lighter than `responses/list`):
 
 ```
-GET /api/reports/responses/list
-  params: start=current_window_start, end=current_window_end, limit=100
-→ follow next_page until exhausted
-→ compute: total_direct_responses / total_sends
-   (only count pushes with sends > 0)
+GET /api/reports/responses
+  params: start=previous_window_start, end=current_window_end, precision=DAILY
+→ each daily row has ios.{direct,influenced} and android.{direct,influenced}
 ```
 
-Repeat for the previous window.
+Split into current / previous windows and sum **`direct` per OS only**. Ignore
+`influenced`. Then compute, per OS:
 
-### Step 5 — Fetch devices snapshot
+```
+direct_response_rate_{os} = direct_{os} / push_sends_{os} * 100   (%)
+```
+
+(`push_sends_{os}` from Step 1.) Keep both windows for collapse detection in
+Step 8.
+
+### Step 5 — Fetch time in app (per OS)
+
+```
+GET /api/reports/timeinapp
+  params: start=previous_window_start, end=current_window_end, precision=DAILY
+→ each daily row has ios and android values
+```
+
+Split into current / previous windows. Per OS, compute the **average daily
+value**: `timeinapp_avg_{os} = sum(values in window) / number_of_days`.
+
+If the endpoint rejects `precision=DAILY` or returns 401/403, log
+`"scope unavailable: /api/reports/timeinapp"` and skip time-in-app KPIs (do not
+alert on missing data).
+
+### Step 6 — Fetch devices snapshot
 
 ```
 GET /api/reports/devices
@@ -142,7 +193,7 @@ GET /api/reports/devices
 Extract per platform: `unique_devices`, `opted_in`, `opted_out`, `uninstalled`
 for `ios`, `android`, and `web` (if `web.unique_devices > 0`).
 
-### Step 6 — Read canvas for state (devices D-7 and open alerts)
+### Step 7 — Read canvas for state (devices D-7 and open alerts)
 
 ```
 slack_read_canvas(canvas_id)
@@ -152,33 +203,42 @@ If `canvas_id` is empty (first run), skip this step — there is no prior state.
 
 Parse the canvas to extract:
 1. **Devices snapshot from 7 days ago** — look for a row tagged with date
-   `current_window_start` (= yesterday - 6 days). Extract `ios.unique_devices`,
-   `ios.opted_in`, `ios.uninstalled`, `android.*`, `web.*`.
+   `current_window_start` (= yesterday - 6 days) in the Devices History table.
+   Extract `ios.unique_devices`, `ios.opted_in`, `ios.uninstalled`,
+   `android.*`, `web.*`.
 2. **Currently open alerts** — list of alert keys already posted and not yet
-   resolved (format: `ALERT_KEY | opened_date | last_seen_date`).
+   resolved (format: `ALERT_KEY | os | opened_date | last_seen_date`).
 
 If no row found for D-7, device delta metrics are **not computable** — mark
 them as `"n/a (canvas history pending)"` and do not trigger thresholds.
 
-### Step 7 — Compute deltas and evaluate thresholds
+### Step 8 — Compute deltas and evaluate thresholds
 
 #### Default thresholds (overridden by custom thresholds in the prompt)
 
 ```yaml
-# App
+# App (evaluated PER OS: ios, android)
 app_opens_drop_pct: 20          # drop > 20% → alert
 
-# Devices (vs canvas D-7 snapshot)
+# Engagement / time in app (PER OS)
+timeinapp_drop_pct: 20          # avg time-in-app drop > 20% → alert
+
+# Devices (vs canvas D-7 snapshot, PER OS)
 devices_unique_drop_pct: 5      # drop > 5% → alert
 devices_optin_drop_pct: 5       # drop > 5% → alert
 devices_uninstall_rise_pct: 10  # rise > 10% → alert
 
-# Push mobile
+# Push mobile (evaluated PER OS: ios, android)
 push_sends_drop_pct: 30         # drop > 30% → alert
 optouts_rise_pct: 20            # push opt-out raw count rise > 20% → alert (rate per send also shown)
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
+direct_response_collapse_pct: 60 # WoW drop of direct response RATE ≥ 60% on an OS → likely tracking/SDK issue
 
-# Email
+# Acquisition / opt-ins (PER OS)
+optins_drop_pct: 25             # new opt-ins drop > 25% → alert
+# net_optin_negative: alert if net (opt-ins − opt-outs) flips from ≥0 to <0
+
+# Email (channel-level, no OS split)
 email_sends_drop_pct: 20        # drop > 20% → alert
 email_deliverability_min: 95    # rate < 95% → alert (absolute)
 email_open_rate_drop_pts: 5     # drop > 5 percentage points → alert
@@ -193,77 +253,116 @@ custom_event_rise_pct: 50       # rise > 50% → alert
 custom_event_drop_pct: 50       # drop > 50% → alert
 
 # Minimum volumes to evaluate a threshold (anti false-positive)
-min_push_sends: 1000            # skip push thresholds if prev 7d sends < 1000
+min_push_sends: 1000            # per OS — skip push thresholds if prev 7d sends < 1000
 min_email_sends: 500            # skip email thresholds if prev 7d emails < 500
 min_custom_event_count: 200     # skip custom event threshold if prev count < 200
+min_optins: 100                 # per OS — skip opt-in thresholds if prev 7d opt-ins < 100
+min_timeinapp: 1                # skip time-in-app threshold if prev avg < 1
 ```
 
-#### Metric calculations
+#### Metric calculations (per OS where applicable)
+
+For each `os` in {`ios`, `android`}:
 
 ```
-push_sends_current  = sum(sends.ios + sends.android) over current window
-push_sends_previous = sum(sends.ios + sends.android) over previous window
-push_sends_delta_pct = (current - previous) / previous * 100
+# App opens
+app_opens_{os}_current   = sum(opens.{os}) over current window
+app_opens_{os}_previous  = sum(opens.{os}) over previous window
+app_opens_{os}_delta_pct = (current - previous) / previous * 100
+# Source: /api/reports/opens
 
-app_opens_current  = sum(opens.ios + opens.android) over current window
-app_opens_previous = sum(opens.ios + opens.android) over previous window
+# Push sends
+push_sends_{os}_current  = sum(sends.{os}) over current window
+push_sends_{os}_previous = sum(sends.{os}) over previous window
+push_sends_{os}_delta_pct = (current - previous) / previous * 100
+# Source: /api/reports/sends
 
-push_optouts_current  = sum(optouts.ios + optouts.android) over current window
-push_optouts_previous = sum(optouts.ios + optouts.android) over previous window
+# Push opt-outs (raw + rate vs sends)
+push_optouts_{os}_current  = sum(optouts.{os}) over current window
+push_optouts_{os}_previous = sum(optouts.{os}) over previous window
+push_optout_rate_{os}_current  = push_optouts_{os}_current  / push_sends_{os}_current  * 100
+push_optout_rate_{os}_previous = push_optouts_{os}_previous / push_sends_{os}_previous * 100
+# Source: /api/reports/optouts (rate denominator = /api/reports/sends)
+# (a device can opt out without opening the push → denominator is sends)
 
-# Always compute the opt-out rate per send alongside the raw count:
-push_optout_rate_current  = push_optouts_current  / push_sends_current  * 100  (%)
-push_optout_rate_previous = push_optouts_previous / push_sends_previous * 100  (%)
-# (denominator = total push sends, not opens — a device can opt out
-#  without opening the push; this is the industry-standard denominator)
-#
-# Email unsubscribes are tracked separately under Email (events["unsubscribe"])
-# and are NOT included in optouts_current.
+# Direct response rate (tracking-health signal)
+direct_response_rate_{os}_current  = direct_{os}_current  / push_sends_{os}_current  * 100
+direct_response_rate_{os}_previous = direct_{os}_previous / push_sends_{os}_previous * 100
+direct_rate_drop_pct_{os} = (previous_rate - current_rate) / previous_rate * 100
+# Source: /api/reports/responses (denominator = /api/reports/sends)
 
-email_sends_current   = sum(sends.email) over current window
-injection_current     = events_current["injection"].count
+# Opt-ins (acquisition velocity + net balance)
+optins_{os}_current   = sum(optins.{os}) over current window
+optins_{os}_previous  = sum(optins.{os}) over previous window
+optins_{os}_delta_pct = (current - previous) / previous * 100
+net_optin_{os}_current  = optins_{os}_current  - push_optouts_{os}_current
+net_optin_{os}_previous = optins_{os}_previous - push_optouts_{os}_previous
+# Source: /api/reports/optins (net uses /api/reports/optouts)
+
+# Time in app
+timeinapp_{os}_current   = avg daily value over current window
+timeinapp_{os}_previous  = avg daily value over previous window
+timeinapp_{os}_delta_pct = (current - previous) / previous * 100
+# Source: /api/reports/timeinapp
+```
+
+Totals (for context display only — thresholds are evaluated per OS):
+
+```
+push_sends_total = push_sends_ios + push_sends_android
+app_opens_total  = app_opens_ios + app_opens_android
+(etc.)
+```
+
+Email metrics (channel-level, unchanged):
+
+```
+email_sends_current   = sum(sends.email) over current window      # /api/reports/sends
+injection_current     = events_current["injection"].count          # /api/reports/events
 delivery_current      = events_current["delivery"].count
-open_current          = events_current["initial_open"].count  (unique opens)
+open_current          = events_current["initial_open"].count       (unique opens)
 bounce_current        = events_current["bounce"].count
 unsubscribe_current   = events_current["unsubscribe"].count
 
-email_deliverability_current  = delivery_current / injection_current * 100
-email_open_rate_current       = open_current / delivery_current * 100
-email_bounce_rate_current     = bounce_current / injection_current * 100
-
+email_deliverability_current = delivery_current / injection_current * 100
+email_open_rate_current      = open_current / delivery_current * 100
+email_bounce_rate_current    = bounce_current / injection_current * 100
 (repeat for previous window)
+```
 
-direct_response_rate_current = total_direct / total_sends (from responses/list)
+Devices deltas (only if D-7 canvas data available), per OS:
 
-# Devices deltas (only if D-7 canvas data available)
-devices_ios_unique_delta_pct  = (today - d7) / d7 * 100
-devices_ios_optin_delta_pct   = (today - d7) / d7 * 100
-devices_ios_uninstall_delta_pct = (today - d7) / d7 * 100
-(same for android, web)
+```
+devices_{os}_unique_delta_pct    = (today - d7) / d7 * 100
+devices_{os}_optin_delta_pct     = (today - d7) / d7 * 100
+devices_{os}_uninstall_delta_pct = (today - d7) / d7 * 100
+# Source: /api/reports/devices (today) vs canvas D-7 snapshot
 ```
 
 #### Assign an alert key to each threshold breach
 
-Each alert has a stable string key (used for deduplication):
+Each alert has a stable string key (used for deduplication). Per-OS keys use
+the `{os}` suffix (`ios` / `android`; `web` for web push).
 
 | Key | Condition |
 |---|---|
-| `push_sends_drop` | push_sends_delta_pct ≤ -push_sends_drop_pct |
-| `app_opens_drop` | app_opens_delta_pct ≤ -app_opens_drop_pct |
-| `push_optouts_rise` | push_optouts_delta_pct ≥ optouts_rise_pct |
-| `direct_response_low` | direct_response_rate_current < direct_response_rate_min |
+| `app_opens_drop_{os}` | app_opens_{os}_delta_pct ≤ -app_opens_drop_pct |
+| `timeinapp_drop_{os}` | timeinapp_{os}_delta_pct ≤ -timeinapp_drop_pct |
+| `push_sends_drop_{os}` | push_sends_{os}_delta_pct ≤ -push_sends_drop_pct |
+| `push_optouts_rise_{os}` | push_optouts_{os}_delta_pct ≥ optouts_rise_pct |
+| `direct_response_low_{os}` | direct_response_rate_{os}_current < direct_response_rate_min |
+| `direct_response_collapse_{os}` | direct_rate_drop_pct_{os} ≥ direct_response_collapse_pct |
+| `optins_drop_{os}` | optins_{os}_delta_pct ≤ -optins_drop_pct |
+| `net_optin_negative_{os}` | net_optin_{os}_previous ≥ 0 AND net_optin_{os}_current < 0 |
 | `email_sends_drop` | email_sends_delta_pct ≤ -email_sends_drop_pct |
 | `email_deliverability_low` | email_deliverability_current < email_deliverability_min |
 | `email_open_rate_drop` | open_rate_drop_pts ≥ email_open_rate_drop_pts |
 | `email_bounce_high` | email_bounce_rate_current > email_bounce_max |
 | `email_unsubscribe_rise` | unsubscribe_delta_pct ≥ email_unsubscribe_rise_pct |
 | `web_sends_drop` | web_sends_delta_pct ≤ -web_sends_drop_pct (if web active) |
-| `devices_ios_unique_drop` | delta_pct ≤ -devices_unique_drop_pct |
-| `devices_ios_optin_drop` | delta_pct ≤ -devices_optin_drop_pct |
-| `devices_ios_uninstall_rise` | delta_pct ≥ devices_uninstall_rise_pct |
-| `devices_android_unique_drop` | idem |
-| `devices_android_optin_drop` | idem |
-| `devices_android_uninstall_rise` | idem |
+| `devices_{os}_unique_drop` | delta_pct ≤ -devices_unique_drop_pct |
+| `devices_{os}_optin_drop` | delta_pct ≤ -devices_optin_drop_pct |
+| `devices_{os}_uninstall_rise` | delta_pct ≥ devices_uninstall_rise_pct |
 | `devices_web_optin_drop` | idem (if web active) |
 | `custom_event_new:{name}` | event in current, absent in previous |
 | `custom_event_vanished:{name}` | event in previous, count=0 in current |
@@ -271,30 +370,42 @@ Each alert has a stable string key (used for deduplication):
 | `custom_event_drop:{name}` | count delta ≤ -custom_event_drop_pct |
 
 Do **not** evaluate a threshold if the relevant previous-window volume is
-below the minimum defined in `min_*` settings. Log `"skipped: low volume"`.
+below the minimum defined in `min_*` settings (per OS where the minimum is
+per OS). Log `"skipped: low volume"`.
 
-### Step 7b — Root cause analysis (for each triggered alert)
+When both `direct_response_low_{os}` and `direct_response_collapse_{os}` fire on
+the same OS, post a single alert keyed `direct_response_collapse_{os}` (it
+implies the low rate).
+
+### Step 8b — Root cause analysis (for each triggered alert)
 
 Run this step only for **new alerts** (not ongoing ones). For each breach,
 produce a short `possible_cause` string to include in the Slack message.
 Work through the checks below in order and stop at the first that explains
 the variation. If none applies, output `"No clear cause identified"`.
 
-#### 1. Cross-metric correlation
+Always state the data source for the reasoning (endpoint + denominator) when
+the cause concerns a problem.
 
-Check whether the alert is mechanically explained by another metric
-already in the dataset (no extra API call needed):
+#### 1. Cross-metric correlation (per OS)
+
+Check whether the alert is mechanically explained by another metric on the
+**same OS** (no extra API call needed):
 
 | Alert | Correlation check |
 |---|---|
-| `app_opens_drop` | If push_sends also dropped proportionally → `"App opens drop is consistent with the -X% push send volume reduction in the same period."` |
-| `push_optouts_rise` (raw) | If push_sends rose significantly → `"Raw opt-out count increase is volume-driven (push sends +X%); opt-out rate per send actually improved/worsened."` |
-| `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel |
+| `app_opens_drop_{os}` | If push_sends_{os} also dropped proportionally → `"App opens drop on {os} is consistent with the -X% push send reduction on {os} (source: /api/reports/opens vs /api/reports/sends)."` |
+| `timeinapp_drop_{os}` | If app_opens_{os} also dropped → engagement-wide erosion on {os}; if opens stable → deeper in-session disengagement. Cite /api/reports/timeinapp. |
+| `direct_response_collapse_{os}` | **Prioritise tracking hypothesis**: `"Direct response rate on {os} collapsed from X% to Y% (direct / push sends, source /api/reports/responses) while sends stayed normal → most likely an attribution/SDK tracking issue on {os}, not a real engagement drop. Recommend checking SDK version / response tracking on {os}."` |
+| `push_optouts_rise_{os}` (raw) | If push_sends_{os} rose significantly → `"Raw opt-out count increase on {os} is volume-driven (push sends +X%); opt-out rate per send actually improved/worsened (source: /api/reports/optouts ÷ /api/reports/sends)."` |
+| `optins_drop_{os}` | If push_sends_{os} or app_opens_{os} also dropped → acquisition slowed alongside lower activity on {os}. Cite /api/reports/optins. |
+| `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
+| `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel |
 
 #### 2. Day-by-day spike/gap detection
 
-Scan the 14-day daily series already fetched (sends, opens) for the
+Scan the 14-day daily series already fetched (sends, opens, per OS) for the
 relevant metric. Identify:
 
 - **Missing days**: any day with 0 or near-0 sends in the current window
@@ -309,9 +420,8 @@ relevant metric. Identify:
 
 #### 3. Top-campaign identification (push alerts only)
 
-Use the `responses/list` data already fetched in Step 4 (paginate one
-more page if needed). For each window, identify the **top 3 pushes by
-sends**. Compare:
+Use `/api/reports/responses/list` (paginate as needed) to identify, for each
+window, the **top 3 pushes by sends**. Compare:
 
 - If a recurring large campaign (similar `group_id` or send pattern)
   is present in the previous window but absent in the current →
@@ -340,9 +450,10 @@ Extract up to 2 relevant headlines or events. If nothing relevant is
 found, skip this check silently.
 
 Possible causes to flag:
-- App store outage or OS update affecting push delivery
+- App store outage or OS update affecting push delivery on one OS
 - Major news event driving unusual app opens (spike in previous window)
 - Client-side campaign pause or scheduling issue
+- SDK/tracking regression on one OS (direct response collapse)
 - Public incident (app crash, data breach, store removal) that may have
   driven opt-outs or opens drop
 - Seasonal event or product launch that drove a spike in the previous window
@@ -353,18 +464,18 @@ For each triggered alert, produce:
 
 ```
 possible_cause: "Short plain-language hypothesis (1–2 sentences).
-  Source: [cross-metric | day analysis | campaign data | web search | none]"
+  Source: [endpoint(s) + denominator | cross-metric | day analysis | campaign data | web search | none]"
 ```
 
 Example outputs:
-- `"App opens drop is consistent with the -38% push send reduction. No sends on Jun 17 (previous Jun 10: 671K).  Source: cross-metric + day analysis"`
-- `"A large campaign (~2.8M sends) present Jun 9–11 was not replicated in the current period. Source: campaign data"`
+- `"App opens drop on iOS is consistent with the -38% push send reduction on iOS. No sends on Jun 17 (previous Jun 10: 671K). Source: /api/reports/opens vs /api/reports/sends + day analysis"`
+- `"Direct response rate on Android collapsed 4.1% → 0.2% (direct / push sends) while sends were normal → likely attribution/SDK tracking issue on Android. Source: /api/reports/responses ÷ /api/reports/sends"`
 - `"No clear cause identified from available data. Recommend checking campaign calendar."`
 
-### Step 8 — Anti-duplication check
+### Step 9 — Anti-duplication check
 
 Compare the set of triggered alert keys against the **open alerts list** read
-from the canvas in Step 6.
+from the canvas in Step 7.
 
 - **New alert** (key not in open list) → add to "alerts to post"
 - **Resolved alert** (key was open, threshold no longer breached) → add to
@@ -372,7 +483,7 @@ from the canvas in Step 6.
 - **Ongoing alert** (key still breached, already open) → do NOT post again,
   only update `last_seen_date` in the canvas
 
-### Step 9 — Post Slack messages
+### Step 10 — Post Slack messages
 
 **Only if there are new alerts or resolutions to post.**
 
@@ -383,23 +494,27 @@ URL returned by `slack_create_canvas` / `slack_update_canvas`.
 #### New alerts message
 
 Use `slack_send_message` to the channel from the automation prompt.
-**Important:** the Slack MCP requires the `message` parameter (not `text`) — always pass `message: "..."` or the call will silently return `no_text` without posting.
+**Important:** the Slack MCP requires the `message` parameter (not `text`) —
+always pass `message: "..."` or the call will silently return `no_text`
+without posting.
 
 ```
 🔴 KPI Alert — {Client name} — {current_window_start} → {current_window_end}
 
-**{Section}**
-| Metric              | Prev 7d          | Last 7d          | Δ                |
-|---------------------|------------------|------------------|------------------|
-| {kpi_label}         | {prev_value}     | {curr_value}     | {delta_str}      |
+**{Section}** _(source: {endpoint})_
+| Metric              | OS       | Prev 7d          | Last 7d          | Δ                |
+|---------------------|----------|------------------|------------------|------------------|
+| {kpi_label}         | {os}     | {prev_value}     | {curr_value}     | {delta_str}      |
 
 > 🔍 **Possible cause:** {possible_cause}
 
-_(Source: Airship Reports API — period data · [📊 KPI Canvas]({canvas_url}))_
+_(Source: Airship Reports API · [📊 KPI Canvas]({canvas_url}))_
 ```
 
-Include only triggered KPIs grouped by section (App, Mobile Push, Email,
-Web Push, Devices, Custom Events). Do not include passing KPIs.
+Include only triggered KPIs grouped by section (App, Engagement, Mobile Push,
+Acquisition, Email, Web Push, Devices, Custom Events). Do not include passing
+KPIs. **Each section header must name its source endpoint**, and each metric
+row must show the OS it concerns.
 
 Each triggered KPI section must be followed by its `> 🔍 Possible cause:`
 line. If multiple alerts share the same root cause, merge them into one
@@ -408,23 +523,37 @@ cause line at the bottom of the message. If no cause was identified, write:
 
 **Labeling rules (mandatory):**
 
+- Always show the **OS** for app/push/engagement/acquisition KPIs. When a
+  metric is breached on one OS only, show that OS row plus the other OS for
+  context.
+
 - Push opt-outs must appear as **"Push opt-outs (vs sends)"** — never just
   "Opt-outs". Always show both the raw count AND the opt-out rate per send on
   the same row:
 
   ```
-  | Push opt-outs (vs sends) | 1.68M (7.7%) | 2.44M (5.7%) | ⬆️ +45% raw / ⬇️ -2.1 pts rate |
+  | Push opt-outs (vs sends) | iOS | 1.68M (7.7%) | 2.44M (5.7%) | ⬆️ +45% raw / ⬇️ -2.1 pts rate |
   ```
 
   Add a footnote line under the table when the raw count rose but the rate
   *improved*:
   `> ℹ️ Raw count increase is volume-driven (push sends also +98%); opt-out rate per send improved.`
 
+- Direct response must appear as **"Direct response rate (vs sends)"** with the
+  denominator and source stated. When a collapse fires, add the explicit
+  tracking caveat:
+  `> ⚠️ Likely a tracking/SDK issue on {os}, not a real engagement drop (direct / push sends, source /api/reports/responses).`
+
+- Time in app must appear as **"Avg time in app /day"** with OS and source
+  `/api/reports/timeinapp`.
+
+- Opt-ins must appear as **"New opt-ins"** and, when relevant, the net balance
+  as **"Net opt-in (opt-ins − opt-outs)"**, citing `/api/reports/optins` and
+  `/api/reports/optouts`.
+
 - Email unsubscribes (tracked under **Email**, not Push) must appear as
   **"Email unsubscribes (vs delivered)"** and show the rate = unsubscribes /
   delivered * 100.
-
-- Direct response rate must appear as **"Direct click rate (vs sends)"**.
 
 - Email open rate must appear as **"Email open rate (vs delivered)"** — the
   denominator is delivered, not injected, not total sends.
@@ -434,7 +563,7 @@ cause line at the bottom of the message. If no cause was identified, write:
 - Email bounce rate must appear as **"Email bounce rate (vs injection)"**.
 
 If `alert_language: fr`, translate all labels and section names to French,
-keeping the denominator clarification in parentheses.
+keeping the denominator clarification and source endpoint in parentheses.
 
 #### Resolution message (when an alert clears)
 
@@ -442,38 +571,99 @@ Also use `slack_send_message` with the `message` parameter (not `text`).
 
 ```
 ✅ KPI Resolved — {Client name} — {today}
-{kpi_label} is back within normal range.
+{kpi_label} ({os}) is back within normal range.
 [📊 KPI Canvas]({canvas_url})
 ```
 
-### Step 10 — Update the canvas
+### Step 11 — Update the canvas
 
 Use `slack_update_canvas` (or `slack_create_canvas` if no canvas ID yet) to
-maintain the weekly state canvas. The canvas format:
+maintain a **rich, synthetic, source-traceable** weekly canvas. Keep it
+visual and scannable: total + per-OS detail, trend arrows, and the source
+endpoint named under each section. Canvas format:
 
 ```
 # KPI Monitor — {Client name}
+_Last run: {today} · Window {current_window_start}→{current_window_end} vs {previous_window_start}→{previous_window_end}_
 
-## Open Alerts
-| Alert key              | Opened     | Last seen  |
-|------------------------|------------|------------|
-| push_sends_drop        | 2026-06-15 | 2026-06-22 |
+## 🚨 Open Alerts
+| Alert key | OS | Opened | Last seen | Possible cause |
+|---|---|---|---|---|
+| push_sends_drop_ios | iOS | 2026-06-15 | 2026-06-22 | No campaign Jun 17 |
 
-## Devices History (daily snapshot)
-| Date       | iOS devices | iOS opted-in | iOS uninstalled | Android devices | Android opted-in | Android uninstalled | Web opted-in |
-|------------|-------------|--------------|-----------------|-----------------|------------------|---------------------|--------------|
-| 2026-06-22 | 5,173,277   | 967,720      | 10,040,083      | 3,574,033       | 1,522,285        | 8,964,751           | 0            |
-| 2026-06-21 | ...         |              |                 |                 |                  |                     |              |
+_(No open alerts → write "No open alerts this week.")_
 
-## Last run
-{today} {current_window_start}→{current_window_end} vs {previous_window_start}→{previous_window_end}
+## 📊 This week at a glance
+
+### App & Engagement  _(source: /api/reports/opens, /api/reports/timeinapp)_
+| KPI | OS | Prev 7d | Last 7d | Δ |
+|---|---|---|---|---|
+| App opens | iOS | … | … | ⬆︎/⬇︎ X% |
+| App opens | Android | … | … | … |
+| App opens | Total | … | … | … |
+| Avg time in app /day | iOS | … | … | … |
+| Avg time in app /day | Android | … | … | … |
+
+### Push  _(source: /api/reports/sends, /api/reports/optouts, /api/reports/responses)_
+| KPI | OS | Prev 7d | Last 7d | Δ |
+|---|---|---|---|---|
+| Sends | iOS | … | … | … |
+| Sends | Android | … | … | … |
+| Opt-outs (vs sends) | iOS | … (… %) | … (… %) | … |
+| Opt-outs (vs sends) | Android | … (… %) | … (… %) | … |
+| Direct response rate (vs sends) | iOS | … % | … % | … |
+| Direct response rate (vs sends) | Android | … % | … % | … |
+
+### Acquisition  _(source: /api/reports/optins + /api/reports/optouts)_
+| KPI | OS | Prev 7d | Last 7d | Δ |
+|---|---|---|---|---|
+| New opt-ins | iOS | … | … | … |
+| New opt-ins | Android | … | … | … |
+| Net opt-in (opt-ins − opt-outs) | iOS | … | … | … |
+| Net opt-in (opt-ins − opt-outs) | Android | … | … | … |
+
+### Email  _(source: /api/reports/events)_
+| KPI | Prev 7d | Last 7d | Δ |
+|---|---|---|---|
+| Sends | … | … | … |
+| Deliverability (delivery/injection) | … % | … % | … |
+| Open rate (vs delivered) | … % | … % | … |
+| Bounce rate (vs injection) | … % | … % | … |
+| Unsubscribes (vs delivered) | … (… %) | … (… %) | … |
+
+_(Omit the Email section entirely if the client sends no email.)_
+
+### Web push  _(source: /api/reports/sends · only if web active)_
+| KPI | Prev 7d | Last 7d | Δ |
+|---|---|---|---|
+| Web sends | … | … | … |
+
+### Custom events  _(source: /api/reports/events)_
+| Event | Prev 7d | Last 7d | Δ |
+|---|---|---|---|
+| {name} | … | … | … |
+
+## 📱 Installed base — snapshot {today}  _(source: /api/reports/devices)_
+| OS | Unique | Opted-in | Opted-out | Uninstalled |
+|---|---|---|---|---|
+| iOS | … | … | … | … |
+| Android | … | … | … | … |
+| Web | … | … | … | … |
+
+## 📈 Devices history (last 30 days)  _(source: /api/reports/devices)_
+| Date | iOS unique | iOS opted-in | iOS uninstalled | Android unique | Android opted-in | Android uninstalled | Web opted-in |
+|---|---|---|---|---|---|---|---|
+| 2026-06-22 | … | … | … | … | … | … | … |
 ```
 
 Update rules:
-1. Prepend a new row to the Devices History table (keep last 30 rows max)
-2. Add new open alerts to the Open Alerts table
-3. Remove resolved alerts from the Open Alerts table
-4. Update the Last run line
+1. Refresh the "This week at a glance" tables with the current run's values.
+2. Prepend a new row to the Devices History table (keep last 30 rows max).
+3. Refresh the Installed base snapshot.
+4. Add new open alerts to the Open Alerts table (with OS + possible cause);
+   remove resolved alerts; update `last_seen` for ongoing ones.
+5. Update the Last run line.
+6. Keep the source endpoint label under every section header.
 
 **If no canvas ID was provided** (first run):
 - Call `slack_create_canvas` with the initial content above
@@ -495,6 +685,8 @@ After each run, print a summary to the agent log:
 
 - If an API call returns 401/403, log `"scope unavailable: {endpoint}"` and
   skip the related KPIs (do not alert on missing data).
+- If `/api/reports/timeinapp` or `/api/reports/responses` rejects
+  `precision=DAILY`, log a warning and skip those KPIs for the run.
 - If `events` pages exceed 20 pages for one window, log a warning and
   continue (do not abort).
 - If `slack_read_canvas` fails (canvas not found or empty), treat as first run.

@@ -12,15 +12,25 @@ server required). One automation per client, deployed in minutes by any TAM.
 
 | Category | KPIs |
 |---|---|
-| **App** | Mobile app opens |
+| **App** | Mobile app opens (per OS) |
+| **Engagement** | Avg time in app /day (per OS) |
 | **Devices** | Installed base, opted-in, uninstalls (iOS, Android, Web) |
-| **Mobile push** | Sends, opt-outs, direct response rate |
+| **Mobile push** | Sends, opt-outs, direct response rate (per OS — direct rate collapse flags a tracking/SDK issue) |
+| **Acquisition** | New opt-ins + net opt-in balance (opt-ins − opt-outs), per OS |
 | **Email** | Sends, deliverability, open rate, bounce rate, unsubscribes |
 | **Web push** | Sends (if channel active) |
 | **Custom events** | New events, strong rises, strong drops, vanished events |
 
+App, push, engagement and acquisition KPIs are analysed **per OS (iOS /
+Android)** so a single-platform regression is never masked by the other
+platform's volume.
+
 All comparisons use **rolling 7-day windows**: last 7 complete days vs the
 7 days before that. This eliminates daily noise and weekly seasonality.
+
+Every figure (Slack + canvas) is **source-traceable** — each section names the
+Airship Reports endpoint it comes from, and any problem alert states the source
+endpoint and the denominator used.
 
 ---
 
@@ -94,15 +104,20 @@ using rolling 7-day windows.
 
 All thresholds can be overridden per client in the automation prompt.
 
+Thresholds tagged "per OS" are evaluated independently for iOS and Android.
+
 | Key | Default | Meaning |
 |---|---|---|
-| `app_opens_drop_pct` | 20 | App opens drop > 20% → alert |
-| `devices_unique_drop_pct` | 5 | Installed base drop > 5% → alert |
-| `devices_optin_drop_pct` | 5 | Opted-in drop > 5% → alert |
-| `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% → alert |
-| `push_sends_drop_pct` | 30 | Push sends drop > 30% → alert |
-| `optouts_rise_pct` | 20 | Opt-outs rise > 20% → alert |
-| `direct_response_rate_min` | 0.5 | Direct click rate < 0.5% → alert |
+| `app_opens_drop_pct` | 20 | App opens drop > 20% → alert (per OS) |
+| `timeinapp_drop_pct` | 20 | Avg time in app drop > 20% → alert (per OS) |
+| `devices_unique_drop_pct` | 5 | Installed base drop > 5% → alert (per OS) |
+| `devices_optin_drop_pct` | 5 | Opted-in drop > 5% → alert (per OS) |
+| `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% → alert (per OS) |
+| `push_sends_drop_pct` | 30 | Push sends drop > 30% → alert (per OS) |
+| `optouts_rise_pct` | 20 | Opt-outs rise > 20% → alert (per OS) |
+| `direct_response_rate_min` | 0.5 | Direct response rate < 0.5% → alert (per OS) |
+| `direct_response_collapse_pct` | 60 | Direct response rate WoW drop ≥ 60% on an OS → likely tracking/SDK issue |
+| `optins_drop_pct` | 25 | New opt-ins drop > 25% → alert (per OS) |
 | `email_sends_drop_pct` | 20 | Email sends drop > 20% → alert |
 | `email_deliverability_min` | 95 | Deliverability < 95% → alert |
 | `email_open_rate_drop_pts` | 5 | Open rate drop > 5 pts → alert |
@@ -112,13 +127,18 @@ All thresholds can be overridden per client in the automation prompt.
 | `custom_event_rise_pct` | 50 | Custom event rise > 50% → alert |
 | `custom_event_drop_pct` | 50 | Custom event drop > 50% → alert |
 
+`net_optin_negative` (no numeric threshold): alerts when the net balance
+(opt-ins − opt-outs) flips from ≥ 0 to < 0 on an OS.
+
 Minimum volumes (thresholds skipped if previous window is below these):
 
 | Key | Default |
 |---|---|
-| `min_push_sends` | 1000 |
+| `min_push_sends` | 1000 (per OS) |
 | `min_email_sends` | 500 |
 | `min_custom_event_count` | 200 |
+| `min_optins` | 100 (per OS) |
+| `min_timeinapp` | 1 |
 
 ---
 
