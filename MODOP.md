@@ -70,6 +70,7 @@ client.
 
 ```
 Run airship-kpi-monitor for client {Client name}.
+Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"}
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Alert language: en
@@ -102,6 +103,7 @@ Create a daily Cloud Agent automation at 7:00 AM that runs
 airship-kpi-monitor for client {Client name} using rolling 7-day windows.
 
 Client name: {Client name}
+Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"}
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Slack canvas ID: {F0XXXXXXXXX}

@@ -76,6 +76,7 @@ Quick summary:
 
 ```
 Client name: {Client name}
+Brand name: {Public brand name for web search — e.g. "Banque Populaire" not "BP PROD"}
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Slack canvas ID: {F0XXXXXXXXX}

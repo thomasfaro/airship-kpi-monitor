@@ -25,11 +25,18 @@ Always update the weekly canvas with today's snapshot.
 | Parameter | Required | Example |
 |---|---|---|
 | `Client name` | yes | `M6` |
+| `Brand name` | no — defaults to Client name | `M6 Group` |
 | `Airship MCP server` | yes | `user-M6 PROD` |
 | `Slack channel ID` | yes | `C0XXXXXXXX` |
 | `Slack canvas ID` | no — created on first run | `F0XXXXXXXX` |
 | `Alert language` | no — default `en` | `en` or `fr` |
 | `Custom thresholds` | no — overrides defaults | `push_sends_drop_pct: 40` |
+
+`Brand name` is the **public-facing brand** used for web searches and news
+lookups in root cause analysis (Step 7b). Use the consumer-facing name rather
+than the internal project name — e.g. `Banque Populaire` instead of `BP PROD`,
+`Burger King France` instead of `BK PROD`, `Harmonie Mutuelle` instead of
+`HM PROD`. If omitted, falls back to `Client name`.
 
 ## Execution workflow
 
@@ -318,10 +325,16 @@ targeted pushes.
 
 #### 4. External context search (best-effort)
 
-Perform a web search for recent news about the client that could explain
-the variation. Use search queries such as:
-- `"{Client name}" app push notification {current_window_start} to {current_window_end}`
-- `"{Client name}" actualité {month} {year}` (or in English for non-French clients)
+Use `brand_name` (or `client_name` if not set) for all web searches —
+**never use the internal MCP server name** (e.g. search for
+`"Banque Populaire"`, not `"BP PROD"`).
+
+Perform web searches to find recent news that could explain the variation:
+- `"{brand_name}" application mobile {month} {year}`
+- `"{brand_name}" notification push problème {month} {year}`
+- `"{brand_name}" actualité {month} {year}` (French clients)
+- `"{brand_name}" app news {month} {year}` (English clients)
+- `"{brand_name}" incident panne {month} {year}` (if sudden drop)
 
 Extract up to 2 relevant headlines or events. If nothing relevant is
 found, skip this check silently.
@@ -330,7 +343,9 @@ Possible causes to flag:
 - App store outage or OS update affecting push delivery
 - Major news event driving unusual app opens (spike in previous window)
 - Client-side campaign pause or scheduling issue
-- Public incident (app crash, data breach) that may have driven opt-outs
+- Public incident (app crash, data breach, store removal) that may have
+  driven opt-outs or opens drop
+- Seasonal event or product launch that drove a spike in the previous window
 
 #### 5. Hypothesis output format
 
