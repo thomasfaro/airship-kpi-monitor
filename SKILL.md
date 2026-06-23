@@ -33,7 +33,6 @@ weekly canvas with today's snapshot.
 | `Airship MCP server` | yes | `user-M6 PROD` |
 | `Slack channel ID` | yes | `C0XXXXXXXX` |
 | `Slack canvas ID` | no — created on first run | `F0XXXXXXXX` |
-| `Alert language` | no — default `en` | `en` or `fr` |
 | `Custom thresholds` | no — overrides defaults | `push_sends_drop_pct: 40` |
 
 `Brand name` is the **public-facing brand** used for web searches and news
@@ -640,91 +639,14 @@ cause line at the bottom of the message. If no cause was identified, write:
 - Web push sends must appear as **"Web push sends"** with source
   `/api/reports/sends field "web"`.
 
-#### Language rules — MANDATORY
-
-**When `alert_language: fr`** (or when the client name suggests a French-speaking
-context and no language is specified), **all user-facing text must be in French**.
-This applies to every Slack message and every canvas section — not just section
-headers, but also metric labels, column headers, footnotes, possible_cause
-sentences, and caveats. Technical strings (endpoint paths, alert keys, OS names
-`iOS` / `Android`, numbers, percentages) are kept as-is.
-
-**French templates and translations to use:**
-
-Alert header:
-```
-🔴 Alerte KPI — {Client name} — {current_window_start} → {current_window_end}
-```
-
-Column headers: `7j préc.` / `7j récents` / `Δ`
-
-Section names and their French equivalents:
-| English | French |
-|---|---|
-| App | Application |
-| Engagement | Engagement |
-| Mobile Push | Push mobile |
-| Acquisition | Acquisition |
-| Email | Email |
-| Web Push | Push web |
-| SMS | SMS |
-| Devices | Parc appareils |
-| Custom Events | Événements personnalisés |
-
-Metric label translations (use these exactly):
-| English label | French label |
-|---|---|
-| App opens | Ouvertures app |
-| Avg time in app /day | Temps moyen dans l'app /jour |
-| Push sends | Envois push |
-| Push opt-outs (vs sends) | Désinscriptions push (vs envois) |
-| Direct response rate (vs sends) | Taux de réponse directe (vs envois) |
-| New opt-ins | Nouvelles inscriptions |
-| Net opt-in (opt-ins − opt-outs) | Solde net (inscriptions − désinscriptions) |
-| Email sends | Envois email |
-| Email deliverability (delivery / injection) | Délivrabilité email (livraisons / injections) |
-| Email open rate (vs delivered) | Taux d'ouverture email (vs livrés) |
-| Email bounce rate (vs injection) | Taux de rebond email (vs injections) |
-| Email unsubscribes (vs delivered) | Désinscriptions email (vs livrés) |
-| SMS sends | Envois SMS |
-| SMS delivery rate (delivered/dispatched) | Taux de livraison SMS (livrés/expédiés) |
-| SMS delivered | SMS livrés |
-| SMS dispatched | SMS expédiés |
-| SMS failed + expired | SMS échoués + expirés |
-| Web push sends | Envois push web |
-| Unique devices | Appareils uniques |
-| Opted-in | Inscrits |
-| Opted-out | Désinscrits |
-| Uninstalled | Désinstallations |
-
-Fixed phrases to translate:
-| English | French |
-|---|---|
-| `> 🔍 **Possible cause:**` | `> 🔍 **Cause probable :**` |
-| `_(Source: Airship Reports API · [📊 KPI Canvas]({url}))_` | `_(Source : Airship Reports API · [📊 Tableau de bord KPI]({url}))_` |
-| `Raw count increase is volume-driven (push sends also +X%); opt-out rate per send improved.` | `La hausse du volume brut est liée à la hausse des envois (+X%) ; le taux de désinscription par envoi s'est amélioré.` |
-| `Likely a tracking/SDK issue on {os}, not a real engagement drop` | `Probablement un problème de tracking/SDK sur {os}, pas une vraie chute d'engagement` |
-| `No clear cause identified from available data. Recommend checking campaign calendar.` | `Aucune cause claire identifiée. Vérifier le calendrier de campagnes.` |
-
-**When `alert_language: en`** (or default), keep all text in English as shown
-in the templates above.
-
 #### Resolution message (when an alert clears)
 
 Also use `slack_send_message` with the `message` parameter (not `text`).
 
-English:
 ```
 ✅ KPI Resolved — {Client name} — {today}
 {kpi_label} ({os}) is back within normal range.
 [📊 KPI Canvas]({canvas_url})
-```
-
-French (`alert_language: fr`):
-```
-✅ KPI normalisé — {Client name} — {today}
-{kpi_label} ({os}) est revenu dans la plage normale.
-[📊 Tableau de bord KPI]({canvas_url})
 ```
 
 ### Step 11 — Update the canvas
@@ -734,13 +656,7 @@ maintain a **rich, synthetic, source-traceable** weekly canvas. Keep it
 visual and scannable: total + per-OS detail, trend arrows, and the source
 endpoint named under each section.
 
-**Apply the same language rule to the canvas**: when `alert_language: fr`,
-translate all canvas section titles, column headers, metric labels, and
-descriptive text to French using the translations defined in the Language
-rules above. Technical strings (endpoints, alert keys, dates, OS names) stay
-as-is. The canvas must be fully in the same language as the Slack messages.
-
-Canvas format (shown in English — translate when `alert_language: fr`):
+Canvas format:
 
 ```
 # KPI Monitor — {Client name}
