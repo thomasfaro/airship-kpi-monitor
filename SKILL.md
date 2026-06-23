@@ -383,6 +383,7 @@ URL returned by `slack_create_canvas` / `slack_update_canvas`.
 #### New alerts message
 
 Use `slack_send_message` to the channel from the automation prompt.
+**Important:** the Slack MCP requires the `message` parameter (not `text`) — always pass `message: "..."` or the call will silently return `no_text` without posting.
 
 ```
 🔴 KPI Alert — {Client name} — {current_window_start} → {current_window_end}
@@ -436,6 +437,8 @@ If `alert_language: fr`, translate all labels and section names to French,
 keeping the denominator clarification in parentheses.
 
 #### Resolution message (when an alert clears)
+
+Also use `slack_send_message` with the `message` parameter (not `text`).
 
 ```
 ✅ KPI Resolved — {Client name} — {today}
