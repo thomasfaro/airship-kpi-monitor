@@ -261,6 +261,86 @@ Each alert has a stable string key (used for deduplication):
 Do **not** evaluate a threshold if the relevant previous-window volume is
 below the minimum defined in `min_*` settings. Log `"skipped: low volume"`.
 
+### Step 7b — Root cause analysis (for each triggered alert)
+
+Run this step only for **new alerts** (not ongoing ones). For each breach,
+produce a short `possible_cause` string to include in the Slack message.
+Work through the checks below in order and stop at the first that explains
+the variation. If none applies, output `"No clear cause identified"`.
+
+#### 1. Cross-metric correlation
+
+Check whether the alert is mechanically explained by another metric
+already in the dataset (no extra API call needed):
+
+| Alert | Correlation check |
+|---|---|
+| `app_opens_drop` | If push_sends also dropped proportionally → `"App opens drop is consistent with the -X% push send volume reduction in the same period."` |
+| `push_optouts_rise` (raw) | If push_sends rose significantly → `"Raw opt-out count increase is volume-driven (push sends +X%); opt-out rate per send actually improved/worsened."` |
+| `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel |
+| `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
+
+#### 2. Day-by-day spike/gap detection
+
+Scan the 14-day daily series already fetched (sends, opens) for the
+relevant metric. Identify:
+
+- **Missing days**: any day with 0 or near-0 sends in the current window
+  that had normal volume in the previous window → `"No sends on {date}
+  (previous equivalent day: {value}). Likely no campaign scheduled."`
+- **Single-day spike in previous window**: if one day in the previous
+  window accounts for > 40% of the 7-day total, the WoW comparison is
+  skewed → `"Previous window inflated by a large send on {date} ({value}).
+  Comparison may overstate the drop."`
+- **Trend**: if the drop is gradual across all 7 days vs concentrated in
+  1–2 days, note it.
+
+#### 3. Top-campaign identification (push alerts only)
+
+Use the `responses/list` data already fetched in Step 4 (paginate one
+more page if needed). For each window, identify the **top 3 pushes by
+sends**. Compare:
+
+- If a recurring large campaign (similar `group_id` or send pattern)
+  is present in the previous window but absent in the current →
+  `"A large recurring campaign (~{sends} sends) present in the previous
+  period was not sent in the current period."`
+- If a new large campaign appeared in the current window → note it as
+  context (may explain an unrelated rise).
+
+Limit to pushes with `sends > 100,000` to avoid noise from small
+targeted pushes.
+
+#### 4. External context search (best-effort)
+
+Perform a web search for recent news about the client that could explain
+the variation. Use search queries such as:
+- `"{Client name}" app push notification {current_window_start} to {current_window_end}`
+- `"{Client name}" actualité {month} {year}` (or in English for non-French clients)
+
+Extract up to 2 relevant headlines or events. If nothing relevant is
+found, skip this check silently.
+
+Possible causes to flag:
+- App store outage or OS update affecting push delivery
+- Major news event driving unusual app opens (spike in previous window)
+- Client-side campaign pause or scheduling issue
+- Public incident (app crash, data breach) that may have driven opt-outs
+
+#### 5. Hypothesis output format
+
+For each triggered alert, produce:
+
+```
+possible_cause: "Short plain-language hypothesis (1–2 sentences).
+  Source: [cross-metric | day analysis | campaign data | web search | none]"
+```
+
+Example outputs:
+- `"App opens drop is consistent with the -38% push send reduction. No sends on Jun 17 (previous Jun 10: 671K).  Source: cross-metric + day analysis"`
+- `"A large campaign (~2.8M sends) present Jun 9–11 was not replicated in the current period. Source: campaign data"`
+- `"No clear cause identified from available data. Recommend checking campaign calendar."`
+
 ### Step 8 — Anti-duplication check
 
 Compare the set of triggered alert keys against the **open alerts list** read
@@ -288,11 +368,18 @@ Use `slack_send_message` to the channel from the automation prompt.
 |---------------------|------------------|------------------|------------------|
 | {kpi_label}         | {prev_value}     | {curr_value}     | {delta_str}      |
 
+> 🔍 **Possible cause:** {possible_cause}
+
 _(Source: Airship Reports API — period data)_
 ```
 
 Include only triggered KPIs grouped by section (App, Mobile Push, Email,
 Web Push, Devices, Custom Events). Do not include passing KPIs.
+
+Each triggered KPI section must be followed by its `> 🔍 Possible cause:`
+line. If multiple alerts share the same root cause, merge them into one
+cause line at the bottom of the message. If no cause was identified, write:
+`> 🔍 Possible cause: No clear cause identified from available data. Recommend checking campaign calendar.`
 
 **Labeling rules (mandatory):**
 
