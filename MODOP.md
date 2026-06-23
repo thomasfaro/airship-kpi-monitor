@@ -42,6 +42,43 @@ The Airship MCP for the client must already be configured in Cursor (e.g.,
 `user-M6 PROD`). If not, add it via **Settings → MCP** with the client's
 app key and OAuth credentials.
 
+Before configuring the MCP, create an OAuth client in the Airship project
+dashboard with the scopes required by this monitor.
+
+### 1.5 Create an Airship OAuth token (per client project)
+
+In the client's Airship project dashboard:
+
+1. Go to **Settings → OAuth** (or **Project → Settings → OAuth**)
+2. Click **Create OAuth Client** (or equivalent)
+3. Give it a clear name, e.g. `Cursor KPI Monitor`
+4. Under **Scopes**, enable at minimum:
+   - **`rpt`** — Reports (required for all KPI endpoints used by the skill:
+     `/api/reports/sends`, `/api/reports/opens`, `/api/reports/optins`,
+     `/api/reports/optouts`, `/api/reports/responses`, `/api/reports/devices`,
+     `/api/reports/timeinapp`, `/api/reports/events`, `/api/reports/responses/list`)
+   - **`tpl`** — Content (required if the MCP or future skill steps need
+     content template access; include it on the OAuth client to avoid
+     `403` errors on content-related calls)
+5. Save the client and copy:
+   - **App Key** (project app key)
+   - **Client ID**
+   - **Client Secret**
+6. Note the project **region** (`us` or `eu`) — it determines the API base URL
+
+Use these values when adding the client's Airship MCP in Cursor:
+
+| MCP env var | Value |
+|---|---|
+| `AIRSHIP_APP_KEY` | Project app key |
+| `AIRSHIP_CLIENT_ID` | OAuth client ID |
+| `AIRSHIP_CLIENT_SECRET` | OAuth client secret |
+| `AIRSHIP_REGION` | `us` or `eu` |
+
+> **Scope check**: if API calls return `401` or `403`, verify the OAuth
+> client includes `rpt` (and `tpl` if content endpoints are called). Do not
+> use a token scoped only to `psh` (Push) — it is not sufficient for Reports.
+
 ---
 
 ## Part 2 — Gather client info (once per client)
@@ -55,7 +92,6 @@ You need three pieces of information before setting up the automation:
 | **Slack canvas ID** | Leave blank — the skill creates it on the first run and returns the ID |
 
 Optional:
-- **Alert language**: `en` (default) or `fr` for French-language alerts
 - **Custom thresholds**: any threshold from the default list you want to
   override for this client (e.g. `push_sends_drop_pct: 40`)
 
@@ -73,7 +109,6 @@ Run airship-kpi-monitor for client {Client name}.
 Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"}
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
-Alert language: en
 
 Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check
 using rolling 7-day windows.
@@ -107,7 +142,6 @@ Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Slack canvas ID: {F0XXXXXXXXX}
-Alert language: en
 
 Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check.
 ```
@@ -158,7 +192,7 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `401 / 403` errors on Airship API | MCP credentials expired | Refresh OAuth token in Cursor MCP settings |
+| `401 / 403` errors on Airship API | Missing OAuth scopes (`rpt`, `tpl`) or expired credentials | In Airship **Settings → OAuth**, confirm the client has `rpt` + `tpl`; refresh Client ID/Secret in Cursor MCP settings |
 | No Slack message posted | Volume below minimums, or no anomaly | Check agent log — it prints `New alerts: 0` |
 | Canvas not found | Wrong canvas ID in prompt | Re-run manual test to get correct ID |
 | Device delta shows `n/a` | Less than 7 daily runs completed | Wait — fills automatically after 7 days |
