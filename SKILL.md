@@ -163,7 +163,7 @@ devices_uninstall_rise_pct: 10  # rise > 10% → alert
 
 # Push mobile
 push_sends_drop_pct: 30         # drop > 30% → alert
-optouts_rise_pct: 20            # rise > 20% → alert
+optouts_rise_pct: 20            # push opt-out raw count rise > 20% → alert (rate per send also shown)
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 
 # Email
@@ -196,8 +196,17 @@ push_sends_delta_pct = (current - previous) / previous * 100
 app_opens_current  = sum(opens.ios + opens.android) over current window
 app_opens_previous = sum(opens.ios + opens.android) over previous window
 
-optouts_current  = sum(optouts) over current window
-optouts_previous = sum(optouts) over previous window
+push_optouts_current  = sum(optouts.ios + optouts.android) over current window
+push_optouts_previous = sum(optouts.ios + optouts.android) over previous window
+
+# Always compute the opt-out rate per send alongside the raw count:
+push_optout_rate_current  = push_optouts_current  / push_sends_current  * 100  (%)
+push_optout_rate_previous = push_optouts_previous / push_sends_previous * 100  (%)
+# (denominator = total push sends, not opens — a device can opt out
+#  without opening the push; this is the industry-standard denominator)
+#
+# Email unsubscribes are tracked separately under Email (events["unsubscribe"])
+# and are NOT included in optouts_current.
 
 email_sends_current   = sum(sends.email) over current window
 injection_current     = events_current["injection"].count
@@ -229,7 +238,7 @@ Each alert has a stable string key (used for deduplication):
 |---|---|
 | `push_sends_drop` | push_sends_delta_pct ≤ -push_sends_drop_pct |
 | `app_opens_drop` | app_opens_delta_pct ≤ -app_opens_drop_pct |
-| `optouts_rise` | optouts_delta_pct ≥ optouts_rise_pct |
+| `push_optouts_rise` | push_optouts_delta_pct ≥ optouts_rise_pct |
 | `direct_response_low` | direct_response_rate_current < direct_response_rate_min |
 | `email_sends_drop` | email_sends_delta_pct ≤ -email_sends_drop_pct |
 | `email_deliverability_low` | email_deliverability_current < email_deliverability_min |
@@ -285,7 +294,35 @@ _(Source: Airship Reports API — period data)_
 Include only triggered KPIs grouped by section (App, Mobile Push, Email,
 Web Push, Devices, Custom Events). Do not include passing KPIs.
 
-If `alert_language: fr`, translate all labels and section names to French.
+**Labeling rules (mandatory):**
+
+- Push opt-outs must appear as **"Push opt-outs (vs sends)"** — never just
+  "Opt-outs". Always show both the raw count AND the opt-out rate per send on
+  the same row:
+
+  ```
+  | Push opt-outs (vs sends) | 1.68M (7.7%) | 2.44M (5.7%) | ⬆️ +45% raw / ⬇️ -2.1 pts rate |
+  ```
+
+  Add a footnote line under the table when the raw count rose but the rate
+  *improved*:
+  `> ℹ️ Raw count increase is volume-driven (push sends also +98%); opt-out rate per send improved.`
+
+- Email unsubscribes (tracked under **Email**, not Push) must appear as
+  **"Email unsubscribes (vs delivered)"** and show the rate = unsubscribes /
+  delivered * 100.
+
+- Direct response rate must appear as **"Direct click rate (vs sends)"**.
+
+- Email open rate must appear as **"Email open rate (vs delivered)"** — the
+  denominator is delivered, not injected, not total sends.
+
+- Email deliverability must appear as **"Email deliverability (delivery / injection)"**.
+
+- Email bounce rate must appear as **"Email bounce rate (vs injection)"**.
+
+If `alert_language: fr`, translate all labels and section names to French,
+keeping the denominator clarification in parentheses.
 
 #### Resolution message (when an alert clears)
 
