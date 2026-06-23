@@ -117,6 +117,7 @@ The agent will open the Automations editor with the prefilled draft.
 - [ ] Execution mode: `Cloud` (not Local)
 - [ ] Workspace: `thomasfaro/airship-kpi-monitor`
 - [ ] MCPs listed: Airship client MCP + Slack MCP
+- [ ] Model: **claude-sonnet** (latest version — do NOT use extended thinking / reasoning mode)
 - [ ] Prompt contains the correct client config
 
 Click **Save**.

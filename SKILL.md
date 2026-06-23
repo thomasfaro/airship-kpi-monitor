@@ -6,6 +6,7 @@ description: >-
   custom events. Posts Slack alerts to a client channel and maintains a
   weekly canvas summary. Uses the Airship Reports API via MCP and the Slack
   MCP plugin. Designed to run as a Cursor Cloud Agent automation.
+model: claude-sonnet-4-5
 ---
 
 # Airship KPI Monitor — Daily Rolling Window Check
