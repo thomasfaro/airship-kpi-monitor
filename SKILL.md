@@ -4,10 +4,10 @@ description: >-
   Daily Airship KPI monitoring with rolling 7-day window comparison, analysed
   per OS (iOS / Android). Detects significant variations in app opens, time in
   app, push sends/opt-outs, direct response rate (tracking-health signal),
-  opt-in velocity, email metrics, web push and custom events. Posts Slack
-  alerts to a client channel and maintains a rich, source-traceable weekly
-  canvas. Uses the Airship Reports API via MCP and the Slack MCP plugin.
-  Designed to run as a Cursor Cloud Agent automation.
+  opt-in velocity, email metrics, web push, SMS sends and delivery rate, and
+  custom events. Posts Slack alerts to a client channel and maintains a rich,
+  source-traceable weekly canvas. Uses the Airship Reports API via MCP and the
+  Slack MCP plugin. Designed to run as a Cursor Cloud Agent automation.
 model: claude-sonnet
 # Always use the latest available Claude Sonnet version in the Cursor
 # Automations editor — do not pin a specific version number (e.g. 4-5, 4-6).
@@ -58,6 +58,11 @@ denominator used.**
 | Time in app (per OS) | `/api/reports/timeinapp` | avg value/day returned by Airship |
 | Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
 | Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
+| SMS sends | `/api/reports/sends` | raw count (field `sms`) |
+| SMS delivery rate | `/api/reports/events` | `delivered` / `dispatched` SMS delivery report events |
+| SMS devices snapshot | `/api/reports/devices` | `sms.unique_devices`, `sms.opted_in`, `sms.opted_out`, `sms.uninstalled` |
+| Web push sends | `/api/reports/sends` | raw count (field `web`) |
+| Web push devices snapshot | `/api/reports/devices` | `web.unique_devices`, `web.opted_in` |
 | Custom events | `/api/reports/events` | raw count |
 | Top campaigns (root cause only) | `/api/reports/responses/list` | per push |
 
@@ -106,8 +111,11 @@ For each response, split the daily rows into two groups:
 - **current**: rows where date ∈ [current_window_start, current_window_end]
 - **previous**: rows where date ∈ [previous_window_start, previous_window_end]
 
-Then sum **per platform** (`ios`, `android`, and `web` where present) for each
-group. Keep per-OS sums AND a total. Opt-ins are now actively used (Step 8).
+Then sum **per platform** (`ios`, `android`, `web` where present, and `sms`
+where present) for each group. Keep per-platform sums AND a total.
+Opt-ins are actively used (Step 8). Note: `/api/reports/optins` and
+`/api/reports/optouts` return only `ios` / `android` — there are no
+per-day SMS or web opt-in/opt-out series from these endpoints.
 
 ### Step 2 — Fetch email system events (two separate 7-day calls)
 
@@ -191,7 +199,9 @@ GET /api/reports/devices
 ```
 
 Extract per platform: `unique_devices`, `opted_in`, `opted_out`, `uninstalled`
-for `ios`, `android`, and `web` (if `web.unique_devices > 0`).
+for `ios`, `android`, `web` (if `web.unique_devices > 0`), and `sms` (if
+`sms.unique_devices > 0`). These are used both for the canvas snapshot and
+for D-7 delta comparisons (Step 8).
 
 ### Step 7 — Read canvas for state (devices D-7 and open alerts)
 
@@ -205,7 +215,7 @@ Parse the canvas to extract:
 1. **Devices snapshot from 7 days ago** — look for a row tagged with date
    `current_window_start` (= yesterday - 6 days) in the Devices History table.
    Extract `ios.unique_devices`, `ios.opted_in`, `ios.uninstalled`,
-   `android.*`, `web.*`.
+   `android.*`, `web.*`, `sms.*` (if present).
 2. **Currently open alerts** — list of alert keys already posted and not yet
    resolved (format: `ALERT_KEY | os | opened_date | last_seen_date`).
 
@@ -247,6 +257,13 @@ email_unsubscribe_rise_pct: 30  # rise > 30% → alert
 
 # Web push (only evaluated if web.unique_devices > 0)
 web_sends_drop_pct: 30          # drop > 30% → alert
+web_sends_rise_pct: 100         # rise > 100% → alert (unexpected spike)
+
+# SMS channel (only evaluated if sms.unique_devices > 0 OR sms_sends_prev > 0)
+sms_sends_drop_pct: 30          # WoW drop > 30% → alert
+sms_sends_rise_pct: 100         # WoW rise > 100% → alert (unexpected spike)
+sms_delivery_rate_min: 85       # delivery rate (delivered/dispatched) < 85% → alert
+sms_delivery_rate_drop_pts: 10  # delivery rate drops > 10 percentage points → alert
 
 # Custom events
 custom_event_rise_pct: 50       # rise > 50% → alert
@@ -258,6 +275,9 @@ min_email_sends: 500            # skip email thresholds if prev 7d emails < 500
 min_custom_event_count: 200     # skip custom event threshold if prev count < 200
 min_optins: 100                 # per OS — skip opt-in thresholds if prev 7d opt-ins < 100
 min_timeinapp: 1                # skip time-in-app threshold if prev avg < 1
+min_sms_sends: 100              # skip SMS sends thresholds if prev 7d SMS sends < 100
+min_sms_dispatched: 50          # skip SMS delivery rate threshold if prev 7d dispatched < 50
+min_web_sends: 100              # skip web push threshold if prev 7d web sends < 100
 ```
 
 #### Metric calculations (per OS where applicable)
@@ -314,6 +334,45 @@ app_opens_total  = app_opens_ios + app_opens_android
 (etc.)
 ```
 
+Web push metrics (channel-level; only evaluated if web.unique_devices > 0 OR
+web_sends_prev > 0):
+
+```
+web_sends_current  = sum(sends.web) over current window   # /api/reports/sends
+web_sends_previous = sum(sends.web) over previous window
+web_sends_delta_pct = (current - previous) / previous * 100
+# Source: /api/reports/sends field "web"
+```
+
+SMS metrics (channel-level; only evaluated if sms.unique_devices > 0 OR
+sms_sends_previous > 0):
+
+```
+sms_sends_current  = sum(sends.sms) over current window   # /api/reports/sends
+sms_sends_previous = sum(sends.sms) over previous window
+sms_sends_delta_pct = (current - previous) / previous * 100
+# Source: /api/reports/sends field "sms"
+
+# SMS delivery rate — from SMS Delivery Report custom events (if present)
+# These events are fired by the SMS provider and flow through /api/reports/events
+sms_dispatched_current  = events_current["dispatched"].count  (where location=custom)
+sms_delivered_current   = events_current["delivered"].count
+sms_failed_current      = events_current["failed"].count
+sms_expired_current     = events_current["expired"].count
+sms_dispatched_previous = events_previous["dispatched"].count
+sms_delivered_previous  = events_previous["delivered"].count
+
+sms_delivery_rate_current  = sms_delivered_current  / sms_dispatched_current  * 100
+sms_delivery_rate_previous = sms_delivered_previous / sms_dispatched_previous * 100
+sms_delivery_rate_drop_pts = sms_delivery_rate_previous - sms_delivery_rate_current
+# Source: /api/reports/events (SMS Delivery Report events, location=custom)
+# Note: only compute delivery rate if sms_dispatched_current >= min_sms_dispatched
+# Note: "dispatched", "delivered", "failed" etc. events are SMS-specific only when
+#       the project uses the SMS channel; they will be absent or near-zero otherwise.
+#       If a project also has other custom events with these names, use context (volume,
+#       correlation with sms_sends) to confirm they are SMS delivery events.
+```
+
 Email metrics (channel-level, unchanged):
 
 ```
@@ -360,6 +419,11 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `email_bounce_high` | email_bounce_rate_current > email_bounce_max |
 | `email_unsubscribe_rise` | unsubscribe_delta_pct ≥ email_unsubscribe_rise_pct |
 | `web_sends_drop` | web_sends_delta_pct ≤ -web_sends_drop_pct (if web active) |
+| `web_sends_rise` | web_sends_delta_pct ≥ web_sends_rise_pct (if web active) |
+| `sms_sends_drop` | sms_sends_delta_pct ≤ -sms_sends_drop_pct (if SMS active) |
+| `sms_sends_rise` | sms_sends_delta_pct ≥ sms_sends_rise_pct (if SMS active) |
+| `sms_delivery_rate_low` | sms_delivery_rate_current < sms_delivery_rate_min (if dispatched ≥ min_sms_dispatched) |
+| `sms_delivery_rate_drop` | sms_delivery_rate_drop_pts ≥ sms_delivery_rate_drop_pts threshold (same guard) |
 | `devices_{os}_unique_drop` | delta_pct ≤ -devices_unique_drop_pct |
 | `devices_{os}_optin_drop` | delta_pct ≤ -devices_optin_drop_pct |
 | `devices_{os}_uninstall_rise` | delta_pct ≥ devices_uninstall_rise_pct |
@@ -401,7 +465,11 @@ Check whether the alert is mechanically explained by another metric on the
 | `optins_drop_{os}` | If push_sends_{os} or app_opens_{os} also dropped → acquisition slowed alongside lower activity on {os}. Cite /api/reports/optins. |
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
-| `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel |
+| `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel. Check if web.unique_devices also dropped (source: /api/reports/devices). |
+| `sms_sends_drop` | Check day-by-day series for gaps (no sends on a given day = no campaign). If sms.unique_devices also dropped → audience erosion. Source: /api/reports/sends field "sms". |
+| `sms_sends_rise` | Unexpected spike — check day-by-day for concentration on a single day (bulk campaign or test blast). Source: /api/reports/sends field "sms". |
+| `sms_delivery_rate_low` | High `failed` + `expired` counts vs `dispatched` → carrier/network issues or invalid MSISDNs. `failed` + `expired` / `dispatched` cited. Source: /api/reports/events SMS Delivery Report events. |
+| `sms_delivery_rate_drop` | WoW degradation of delivery rate — check whether `failed` or `expired` events rose. Source: /api/reports/events SMS Delivery Report events. |
 
 #### 2. Day-by-day spike/gap detection
 
@@ -512,9 +580,9 @@ _(Source: Airship Reports API · [📊 KPI Canvas]({canvas_url}))_
 ```
 
 Include only triggered KPIs grouped by section (App, Engagement, Mobile Push,
-Acquisition, Email, Web Push, Devices, Custom Events). Do not include passing
-KPIs. **Each section header must name its source endpoint**, and each metric
-row must show the OS it concerns.
+Acquisition, Email, Web Push, SMS, Devices, Custom Events). Do not include
+passing KPIs. **Each section header must name its source endpoint**, and each
+metric row must show the OS / channel it concerns.
 
 Each triggered KPI section must be followed by its `> 🔍 Possible cause:`
 line. If multiple alerts share the same root cause, merge them into one
@@ -561,6 +629,16 @@ cause line at the bottom of the message. If no cause was identified, write:
 - Email deliverability must appear as **"Email deliverability (delivery / injection)"**.
 
 - Email bounce rate must appear as **"Email bounce rate (vs injection)"**.
+
+- SMS sends must appear as **"SMS sends"** with the WoW delta and source
+  `/api/reports/sends field "sms"`.
+
+- SMS delivery rate must appear as **"SMS delivery rate (delivered/dispatched)"**
+  and always show `delivered` count, `dispatched` count, `failed + expired`
+  count, and the rate. Source: `/api/reports/events` (SMS Delivery Report).
+
+- Web push sends must appear as **"Web push sends"** with source
+  `/api/reports/sends field "web"`.
 
 If `alert_language: fr`, translate all labels and section names to French,
 keeping the denominator clarification and source endpoint in parentheses.
@@ -638,6 +716,20 @@ _(Omit the Email section entirely if the client sends no email.)_
 |---|---|---|---|
 | Web sends | … | … | … |
 
+_(Omit the Web push section entirely if web.unique_devices = 0 and web_sends_prev = 0.)_
+
+### SMS  _(source: /api/reports/sends + /api/reports/events · only if SMS active)_
+| KPI | Prev 7d | Last 7d | Δ |
+|---|---|---|---|
+| SMS sends | … | … | … |
+| SMS delivery rate (delivered/dispatched) | … % | … % | … |
+| SMS delivered | … | … | … |
+| SMS dispatched | … | … | … |
+| SMS failed + expired | … | … | … |
+
+_(Omit the SMS section entirely if sms.unique_devices = 0 and sms_sends_prev = 0.)_
+_(Omit the delivery rate row if dispatched < min_sms_dispatched.)_
+
 ### Custom events  _(source: /api/reports/events)_
 | Event | Prev 7d | Last 7d | Δ |
 |---|---|---|---|
@@ -648,19 +740,26 @@ _(Omit the Email section entirely if the client sends no email.)_
 |---|---|---|---|---|
 | iOS | … | … | … | … |
 | Android | … | … | … | … |
-| Web | … | … | … | … |
+| Web | … | … | … | — |
+| SMS | … | … | … | … |
+
+_(Omit Web row if web.unique_devices = 0. Omit SMS row if sms.unique_devices = 0.)_
 
 ## 📈 Devices history (last 30 days)  _(source: /api/reports/devices)_
-| Date | iOS unique | iOS opted-in | iOS uninstalled | Android unique | Android opted-in | Android uninstalled | Web opted-in |
-|---|---|---|---|---|---|---|---|
-| 2026-06-22 | … | … | … | … | … | … | … |
+| Date | iOS unique | iOS opted-in | iOS uninstalled | Android unique | Android opted-in | Android uninstalled | Web opted-in | SMS unique | SMS opted-in |
+|---|---|---|---|---|---|---|---|---|---|
+| 2026-06-22 | … | … | … | … | … | … | … | … | … |
+
+_(Omit Web opted-in column if web never active. Omit SMS columns if sms never active.)_
 ```
 
 Update rules:
 1. Refresh the "This week at a glance" tables with the current run's values.
+   Add / remove the Web push and SMS sections based on channel activity.
 2. Prepend a new row to the Devices History table (keep last 30 rows max).
-3. Refresh the Installed base snapshot.
-4. Add new open alerts to the Open Alerts table (with OS + possible cause);
+   Add SMS columns on first SMS-active run; Web opted-in column when web active.
+3. Refresh the Installed base snapshot (add/remove SMS and Web rows as needed).
+4. Add new open alerts to the Open Alerts table (with OS/channel + possible cause);
    remove resolved alerts; update `last_seen` for ongoing ones.
 5. Update the Last run line.
 6. Keep the source endpoint label under every section header.
