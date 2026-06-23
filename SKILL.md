@@ -356,6 +356,10 @@ from the canvas in Step 6.
 
 **Only if there are new alerts or resolutions to post.**
 
+`{canvas_url}` is the Slack canvas URL derived from the canvas ID in the
+automation prompt: `https://app.slack.com/docs/{canvas_id}` — or use the
+URL returned by `slack_create_canvas` / `slack_update_canvas`.
+
 #### New alerts message
 
 Use `slack_send_message` to the channel from the automation prompt.
@@ -370,7 +374,7 @@ Use `slack_send_message` to the channel from the automation prompt.
 
 > 🔍 **Possible cause:** {possible_cause}
 
-_(Source: Airship Reports API — period data)_
+_(Source: Airship Reports API — period data · [📊 KPI Canvas]({canvas_url}))_
 ```
 
 Include only triggered KPIs grouped by section (App, Mobile Push, Email,
@@ -416,6 +420,7 @@ keeping the denominator clarification in parentheses.
 ```
 ✅ KPI Resolved — {Client name} — {today}
 {kpi_label} is back within normal range.
+[📊 KPI Canvas]({canvas_url})
 ```
 
 ### Step 10 — Update the canvas
