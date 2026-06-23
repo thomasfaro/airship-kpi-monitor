@@ -36,14 +36,18 @@ similar). If not, install it from the Cursor MCP marketplace.
 3. Confirm the Slack MCP and the client Airship MCP appear under **Available
    MCPs** for that workspace
 
-### 1.4 Client Airship MCP
+### 1.4 Client Airship MCP — overview
 
-The Airship MCP for the client must already be configured in Cursor (e.g.,
-`user-M6 PROD`). If not, add it via **Settings → MCP** with the client's
-app key and OAuth credentials.
+Each Airship client project needs **its own MCP server entry** in Cursor — one
+OAuth client, one MCP block, one name used in automations.
 
-Before configuring the MCP, create an OAuth client in the Airship project
-dashboard with the scopes required by this monitor.
+Workflow per client:
+
+1. Create OAuth credentials with scopes `rpt` + `tpl` (section 1.5)
+2. Add the MCP server in Cursor (section 1.6)
+3. Smoke-test the connection (section 1.6)
+4. Use the MCP server name in the automation prompt (Part 4), e.g.
+   `Airship MCP server: user-M6 PROD`
 
 ### 1.5 Create an Airship OAuth token (per client project)
 
@@ -52,14 +56,14 @@ In the client's Airship project dashboard:
 1. Go to **Settings → OAuth** (or **Project → Settings → OAuth**)
 2. Click **Create OAuth Client** (or equivalent)
 3. Give it a clear name, e.g. `Cursor KPI Monitor`
-4. Under **Scopes**, enable at minimum:
-   - **`rpt`** — Reports (required for all KPI endpoints used by the skill:
-     `/api/reports/sends`, `/api/reports/opens`, `/api/reports/optins`,
-     `/api/reports/optouts`, `/api/reports/responses`, `/api/reports/devices`,
-     `/api/reports/timeinapp`, `/api/reports/events`, `/api/reports/responses/list`)
-   - **`tpl`** — Content (required if the MCP or future skill steps need
-     content template access; include it on the OAuth client to avoid
-     `403` errors on content-related calls)
+4. Under **Scopes**, enable **only** these two scopes — nothing else:
+   - **`rpt`** — Reports (all KPI endpoints: sends, opens, optins, optouts,
+     responses, devices, timeinapp, events, responses/list)
+   - **`tpl`** — Content
+
+   Do **not** add other scopes (`psh`, `chn`, `evt`, `nu`, etc.). They are
+   not needed for KPI monitoring and widen access unnecessarily. A client
+   scoped only to `psh` (Push) will **not** work — Reports requires `rpt`.
 5. Save the client and copy:
    - **App Key** (project app key)
    - **Client ID**
@@ -75,9 +79,118 @@ Use these values when adding the client's Airship MCP in Cursor:
 | `AIRSHIP_CLIENT_SECRET` | OAuth client secret |
 | `AIRSHIP_REGION` | `us` or `eu` |
 
-> **Scope check**: if API calls return `401` or `403`, verify the OAuth
-> client includes `rpt` (and `tpl` if content endpoints are called). Do not
-> use a token scoped only to `psh` (Push) — it is not sufficient for Reports.
+> **Scope check**: the OAuth client must have **exactly** `rpt` + `tpl` — no
+> more, no less. If API calls return `401` or `403`, verify only these two
+> scopes are enabled.
+
+### 1.6 Configure the client Airship MCP in Cursor
+
+#### Prerequisites
+
+- **`uv`** installed (`brew install uv` or see [docs.astral.sh/uv](https://docs.astral.sh/uv/))
+- **Airship MCP package** available locally on the TAM machine (internal path
+  to the `airship-mcp` project — ask your team lead if you do not have it yet)
+- OAuth credentials from section 1.5 for the target client project
+
+#### Step 1 — Choose a server name
+
+Pick a short, unambiguous name for this client. It becomes the key in
+`mcp.json` and the name you reference in automations.
+
+| Client | Suggested MCP name | Value in automation prompt |
+|---|---|---|
+| M6 | `M6 PROD` | `user-M6 PROD` |
+| Harmonie Mutuelle | `HM PROD` | `user-HM PROD` |
+| Burger King France | `BK PROD` | `user-BK PROD` |
+
+**Naming rule**: Cursor prefixes user MCP servers with `user-`. If the entry
+in `mcp.json` is `"M6 PROD"`, the server identifier in chat and automations
+is `user-M6 PROD`.
+
+#### Step 2 — Add the MCP server
+
+**Option A — Cursor UI (recommended)**
+
+1. Open **Cursor → Settings → Cursor Settings → MCP**
+2. Click **Add new global MCP server** (or **Edit in mcp.json**)
+3. Add a block for the client (see JSON template below)
+4. Save and wait for the MCP status indicator to turn **green**
+
+**Option B — Edit `~/.cursor/mcp.json` directly**
+
+Add one entry per client project inside `"mcpServers"`:
+
+```json
+"M6 PROD": {
+  "command": "uv",
+  "args": [
+    "run",
+    "--directory",
+    "/path/to/airship-mcp",
+    "airship-mcp"
+  ],
+  "env": {
+    "AIRSHIP_APP_KEY": "<project_app_key>",
+    "AIRSHIP_CLIENT_ID": "<oauth_client_id>",
+    "AIRSHIP_CLIENT_SECRET": "<oauth_client_secret>",
+    "AIRSHIP_REGION": "eu"
+  }
+}
+```
+
+Replace:
+
+| Placeholder | Value |
+|---|---|
+| `"M6 PROD"` | Your chosen server name (section 1.6 Step 1) |
+| `/path/to/airship-mcp` | Local path to the `airship-mcp` package on your machine |
+| `<project_app_key>` | App key from the Airship project |
+| `<oauth_client_id>` | OAuth Client ID (section 1.5) |
+| `<oauth_client_secret>` | OAuth Client Secret (section 1.5) |
+| `AIRSHIP_REGION` | `eu` for European projects, `us` for US projects |
+
+> **Security**: `mcp.json` contains secrets — it lives only on your machine,
+> never commit it to git. Do not share screenshots of this file.
+
+`AIRSHIP_RTDS_BEARER_TOKEN` is **not required** for KPI monitoring — omit it
+unless you use RTDS features on the same MCP entry.
+
+After saving, reload MCP servers (**Settings → MCP → refresh**) or restart
+Cursor if the server stays red.
+
+#### Step 3 — Smoke-test the connection
+
+In Cursor chat, with the new MCP server enabled:
+
+```
+Using MCP server user-M6 PROD, call call_airship_api:
+GET /api/reports/devices
+```
+
+**Expected**: `status: success`, `status_code: 200`, a JSON body with
+`counts.ios`, `counts.android`, etc.
+
+**If it fails**:
+
+| Error | Fix |
+|---|---|
+| MCP server red / not found | Check `mcp.json` syntax, `uv` path, and `airship-mcp` directory |
+| `401` / `403` | OAuth client must have exactly `rpt` + `tpl` (Reports + Content only) |
+| Wrong region | Set `AIRSHIP_REGION` to `eu` or `us` to match the project |
+
+#### Step 4 — Enable for Cloud Agents (required for daily automations)
+
+Local MCP configuration is not enough for scheduled Cloud Agent runs.
+
+1. Go to [cursor.com/dashboard](https://cursor.com/dashboard?tab=cloud-agents)
+2. Open the **airship-kpi-monitor** workspace
+3. Under **Available MCPs**, confirm the client server appears (e.g.
+   `user-M6 PROD`) alongside `plugin-slack-slack`
+4. If missing, ensure the MCP is defined in your Cursor user settings and
+   Cloud Agents has access to your MCP profile
+
+The automation prompt must reference the exact server identifier:
+`Airship MCP server: user-M6 PROD` (match the name from Step 1).
 
 ---
 
@@ -87,7 +200,7 @@ You need three pieces of information before setting up the automation:
 
 | Info | How to get it |
 |---|---|
-| **Airship MCP server name** | Check Cursor MCP list (e.g. `user-HM PROD`) |
+| **Airship MCP server name** | Name from section 1.6 — Cursor MCP list, prefixed with `user-` (e.g. `user-HM PROD`) |
 | **Slack channel ID** | Right-click the channel in Slack → **Copy link** → the ID is the last segment of the URL, starting with `C` (e.g. `C0YYYYYYYY`) |
 | **Slack canvas ID** | Leave blank — the skill creates it on the first run and returns the ID |
 
@@ -192,7 +305,7 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `401 / 403` errors on Airship API | Missing OAuth scopes (`rpt`, `tpl`) or expired credentials | In Airship **Settings → OAuth**, confirm the client has `rpt` + `tpl`; refresh Client ID/Secret in Cursor MCP settings |
+| `401 / 403` errors on Airship API | Wrong OAuth scopes (need exactly `rpt` + `tpl`) or expired credentials | In Airship **Settings → OAuth**, enable only `rpt` and `tpl`; refresh Client ID/Secret in Cursor MCP settings |
 | No Slack message posted | Volume below minimums, or no anomaly | Check agent log — it prints `New alerts: 0` |
 | Canvas not found | Wrong canvas ID in prompt | Re-run manual test to get correct ID |
 | Device delta shows `n/a` | Less than 7 daily runs completed | Wait — fills automatically after 7 days |
