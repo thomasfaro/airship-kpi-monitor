@@ -656,7 +656,41 @@ maintain a **rich, synthetic, source-traceable** weekly canvas. Keep it
 visual and scannable: total + per-OS detail, trend arrows, and the source
 endpoint named under each section.
 
-Canvas format:
+#### Canvas update procedure (MANDATORY — preserves history)
+
+**Do NOT call `slack_update_canvas` with `action=replace` and no `section_id`.**
+That would overwrite the entire canvas and destroy the Devices History table
+(which is the persistent memory used for D-7 comparisons).
+
+Instead, follow this section-by-section workflow every run:
+
+1. **`slack_read_canvas(canvas_id)`** — already done in Step 7. Reuse the
+   `section_id_mapping` returned. Each section header (`##`, `###`) and
+   content block has its own `section_id`.
+
+2. **Update each section individually** using
+   `slack_update_canvas(canvas_id, action="replace", section_id=<id>, content=<new_content>)`:
+
+   | Section to update | How |
+   |---|---|
+   | `_Last run:` line | `replace` the paragraph section_id with the new date line |
+   | `## 🚨 Open Alerts` | `replace` the section with the refreshed alerts table |
+   | `## 📊 This week at a glance` | `replace` each `###` subsection (App, Push, Acquisition, Email, Web push, SMS, Custom events) individually |
+   | `## 📱 Installed base` | `replace` the section with today's snapshot table |
+   | `## 📈 Devices history` | `prepend` a new row at the top of the table — **never replace the full table** |
+
+3. **Devices History — prepend only:**
+   - Identify the `section_id` of the `## 📈 Devices history` header or its table.
+   - Use `action="prepend"` on that section to insert the new row at the top.
+   - This preserves all existing rows (up to 30; trim the oldest row if the
+     table already has 30 rows by replacing the full section at that point only).
+
+4. **First run (no canvas ID):**
+   - Call `slack_create_canvas` with the full initial content below.
+   - Return the canvas ID so the TAM can copy it into the automation prompt.
+   - On the very next run, the section-by-section workflow applies.
+
+Canvas format (used for first-run creation and as section content reference):
 
 ```
 # KPI Monitor — {Client name}
@@ -751,19 +785,18 @@ _(Omit Web row if web.unique_devices = 0. Omit SMS row if sms.unique_devices = 0
 _(Omit Web opted-in column if web never active. Omit SMS columns if sms never active.)_
 ```
 
-Update rules:
-1. Refresh the "This week at a glance" tables with the current run's values.
-   Add / remove the Web push and SMS sections based on channel activity.
-2. Prepend a new row to the Devices History table (keep last 30 rows max).
+**Section content rules (apply when replacing each section):**
+1. "This week at a glance" subsections — replace with current window values.
+   Add / remove Web push and SMS subsections based on channel activity.
+2. Devices History — **prepend** new row only (never full replace unless trimming to 30 rows).
    Add SMS columns on first SMS-active run; Web opted-in column when web active.
-3. Refresh the Installed base snapshot (add/remove SMS and Web rows as needed).
-4. Add new open alerts to the Open Alerts table (with OS/channel + possible cause);
-   remove resolved alerts; update `last_seen` for ongoing ones.
-5. Update the Last run line.
-6. Keep the source endpoint label under every section header.
+3. Installed base — replace with today's snapshot (add/remove SMS and Web rows as needed).
+4. Open Alerts — replace with updated table: add new alerts, remove resolved, update `last_seen`.
+5. Last run line — replace the paragraph with the new date and window.
+6. Keep source endpoint labels under every section header.
 
-**If no canvas ID was provided** (first run):
-- Call `slack_create_canvas` with the initial content above
+**If `slack_read_canvas` fails** (canvas not found, empty, or first run):
+- Fall back to `slack_create_canvas` with the full initial content
 - Return the canvas ID so the TAM can copy it into the automation prompt
 
 ## Output
