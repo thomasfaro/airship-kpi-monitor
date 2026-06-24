@@ -238,7 +238,7 @@ devices_optin_drop_pct: 5       # drop > 5% → alert
 devices_uninstall_rise_pct: 10  # rise > 10% → alert
 
 # Push mobile (evaluated PER OS: ios, android)
-push_sends_drop_pct: 30         # drop > 30% → alert
+push_sends_drop_pct: 50         # drop > 50% → alert
 optouts_rise_pct: 20            # push opt-out raw count rise > 20% → alert (rate per send also shown)
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 direct_response_collapse_pct: 60 # WoW drop of direct response RATE ≥ 60% on an OS → likely tracking/SDK issue

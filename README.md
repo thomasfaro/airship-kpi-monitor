@@ -113,7 +113,7 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 | `devices_unique_drop_pct` | 5 | Installed base drop > 5% → alert (per OS) |
 | `devices_optin_drop_pct` | 5 | Opted-in drop > 5% → alert (per OS) |
 | `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% → alert (per OS) |
-| `push_sends_drop_pct` | 30 | Push sends drop > 30% → alert (per OS) |
+| `push_sends_drop_pct` | 50 | Push sends drop > 50% → alert (per OS) |
 | `optouts_rise_pct` | 20 | Opt-outs rise > 20% → alert (per OS) |
 | `direct_response_rate_min` | 0.5 | Direct response rate < 0.5% → alert (per OS) |
 | `direct_response_collapse_pct` | 60 | Direct response rate WoW drop ≥ 60% on an OS → likely tracking/SDK issue |
