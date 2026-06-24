@@ -24,9 +24,9 @@ the update script is intentionally a no-op.
 
 ### How the "application" runs
 
-The "application" is `SKILL.md` executed by a **Cursor Cloud Agent** (model:
-latest Claude Sonnet) on a daily schedule, or manually from Cursor chat against
-the local MCP servers. Each run:
+The "application" is `SKILL.md` executed by a **Cursor agent** (model: latest
+Claude Sonnet) triggered from Cursor chat — one-off or recurring via `/loop`.
+Each run:
 
 1. Reads `SKILL.md` (and `clients.yml` for multi-client runs).
 2. Calls the **Airship Reports API** via an **Airship MCP server** (`call_airship_api`).
@@ -34,9 +34,9 @@ the local MCP servers. Each run:
 4. Posts Slack alerts via the **Slack MCP** (`slack_send_message`) and maintains
    a weekly **Slack canvas** (`slack_create_canvas` / `slack_update_canvas`).
 
-The Slack canvas doubles as the database — Cloud Agents have no local storage,
-so each run reads the D-7 device snapshot from the canvas and writes today's
-snapshot back to it.
+The Slack canvas doubles as the database — agents have no local storage between
+runs, so each run reads the D-7 device snapshot from the canvas and writes
+today's snapshot back to it.
 
 To "run in development": follow the manual-test prompt in `MODOP.md` Part 3 (or
 the multi-client / `/loop` modes in `MODOP.md` §2.2), referencing a client's
@@ -55,7 +55,7 @@ Airship MCP server name and a Slack channel ID.
 ### Required external integrations (NOT installable from this repo)
 
 Running the skill end-to-end requires two MCP servers configured in Cursor /
-Cloud Agents — neither can be provisioned from this VM via shell:
+Cursor agents — neither can be provisioned from this VM via shell:
 
 - **Airship MCP** (one entry per client). Backed by the internal `airship-mcp`
   Python package launched with `uv run` (the package is internal — obtain from

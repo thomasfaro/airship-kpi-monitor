@@ -1,7 +1,7 @@
 # MODOP — Airship KPI Monitor Setup Guide for TAMs
 
-> **Audience**: Technical Account Managers setting up the daily KPI alert
-> automation for a new client.  
+> **Audience**: Technical Account Managers setting up the daily KPI monitoring
+> for a new client.  
 > **Time**: ~15 minutes per client (after the one-time prerequisites).
 
 ---
@@ -29,27 +29,19 @@ In Cursor, open **Settings → MCP** (or the MCP panel) and confirm the Slack
 plugin is enabled. It should appear in the list as `plugin-slack-slack` (or
 similar). If not, install it from the Cursor MCP marketplace.
 
-### 1.3 Enable Cloud Agents on cursor.com
-
-1. Go to [cursor.com/dashboard](https://cursor.com/dashboard?tab=cloud-agents)
-2. Under **Cloud Agents**, add `thomasfaro/airship-kpi-monitor` as a workspace
-3. Confirm the Slack MCP and the client Airship MCP appear under **Available
-   MCPs** for that workspace
-
-### 1.4 Client Airship MCP — overview
+### 1.3 Client Airship MCP — overview
 
 Each Airship client project needs **its own MCP server entry** in Cursor — one
-OAuth client, one MCP block, one name used in automations.
+OAuth client, one MCP block, one name used in chat commands.
 
 Workflow per client:
 
-1. Create OAuth credentials with scopes `rpt` + `tpl` (section 1.5)
-2. Add the MCP server in Cursor (section 1.6)
-3. Smoke-test the connection (section 1.6)
-4. Use the MCP server name in the automation prompt (Part 4), e.g.
-   `Airship MCP server: user-M6 PROD`
+1. Create OAuth credentials with scopes `rpt` + `tpl` (section 1.4)
+2. Add the MCP server in Cursor (section 1.5)
+3. Smoke-test the connection (section 1.5 Step 3)
+4. Register the client in your local `clients.yml` (Part 2)
 
-### 1.5 Create an Airship OAuth token (per client project)
+### 1.4 Create an Airship OAuth token (per client project)
 
 In the client's Airship project dashboard:
 
@@ -83,29 +75,28 @@ Use these values when adding the client's Airship MCP in Cursor:
 > more, no less. If API calls return `401` or `403`, verify only these two
 > scopes are enabled.
 
-### 1.6 Configure the client Airship MCP in Cursor
+### 1.5 Configure the client Airship MCP in Cursor
 
 #### Prerequisites
 
 - **`uv`** installed (`brew install uv` or see [docs.astral.sh/uv](https://docs.astral.sh/uv/))
 - **Airship MCP package** available locally on the TAM machine (internal path
   to the `airship-mcp` project — ask your team lead if you do not have it yet)
-- OAuth credentials from section 1.5 for the target client project
+- OAuth credentials from section 1.4 for the target client project
 
 #### Step 1 — Choose a server name
 
 Pick a short, unambiguous name for this client. It becomes the key in
-`mcp.json` and the name you reference in automations.
+`mcp.json` and the identifier you use in Cursor chat.
 
-| Client | Suggested MCP name | Value in automation prompt |
+| Example client | Suggested MCP name | Identifier in chat |
 |---|---|---|
-| M6 | `M6 PROD` | `user-M6 PROD` |
-| Harmonie Mutuelle | `HM PROD` | `user-HM PROD` |
-| Burger King France | `BK PROD` | `user-BK PROD` |
+| Client A | `CLIENT-A PROD` | `user-CLIENT-A PROD` |
+| Client B | `CLIENT-B PROD` | `user-CLIENT-B PROD` |
 
 **Naming rule**: Cursor prefixes user MCP servers with `user-`. If the entry
-in `mcp.json` is `"M6 PROD"`, the server identifier in chat and automations
-is `user-M6 PROD`.
+in `mcp.json` is `"CLIENT-A PROD"`, the server identifier in chat is
+`user-CLIENT-A PROD`.
 
 #### Step 2 — Add the MCP server
 
@@ -121,7 +112,7 @@ is `user-M6 PROD`.
 Add one entry per client project inside `"mcpServers"`:
 
 ```json
-"M6 PROD": {
+"CLIENT-A PROD": {
   "command": "uv",
   "args": [
     "run",
@@ -142,11 +133,11 @@ Replace:
 
 | Placeholder | Value |
 |---|---|
-| `"M6 PROD"` | Your chosen server name (section 1.6 Step 1) |
+| `"CLIENT-A PROD"` | Your chosen server name (Step 1 above) |
 | `/path/to/airship-mcp` | Local path to the `airship-mcp` package on your machine |
 | `<project_app_key>` | App key from the Airship project |
-| `<oauth_client_id>` | OAuth Client ID (section 1.5) |
-| `<oauth_client_secret>` | OAuth Client Secret (section 1.5) |
+| `<oauth_client_id>` | OAuth Client ID (section 1.4) |
+| `<oauth_client_secret>` | OAuth Client Secret (section 1.4) |
 | `AIRSHIP_REGION` | `eu` for European projects, `us` for US projects |
 
 > **Security**: `mcp.json` contains secrets — it lives only on your machine,
@@ -155,7 +146,7 @@ Replace:
 > **Where credentials live**: OAuth credentials are stored **only** here, in
 > `~/.cursor/mcp.json`. The shared `clients.yml` registry (Part 2) holds **no
 > secrets** — it only routes the skill to an MCP server already configured in
-> Cursor (by name) and to a Slack channel. This keeps creds local and the
+> Cursor (by name) and to a Slack channel. This keeps credentials local and the
 > registry safe to commit and share.
 
 `AIRSHIP_RTDS_BEARER_TOKEN` is **not required** for KPI monitoring — omit it
@@ -169,7 +160,7 @@ Cursor if the server stays red.
 In Cursor chat, with the new MCP server enabled:
 
 ```
-Using MCP server user-M6 PROD, call call_airship_api:
+Using MCP server user-CLIENT-A PROD, call call_airship_api:
 GET /api/reports/devices
 ```
 
@@ -184,25 +175,11 @@ GET /api/reports/devices
 | `401` / `403` | OAuth client must have exactly `rpt` + `tpl` (Reports + Content only) |
 | Wrong region | Set `AIRSHIP_REGION` to `eu` or `us` to match the project |
 
-#### Step 4 — Enable for Cloud Agents (required for daily automations)
-
-Local MCP configuration is not enough for scheduled Cloud Agent runs.
-
-1. Go to [cursor.com/dashboard](https://cursor.com/dashboard?tab=cloud-agents)
-2. Open the **airship-kpi-monitor** workspace
-3. Under **Available MCPs**, confirm the client server appears (e.g.
-   `user-M6 PROD`) alongside `plugin-slack-slack`
-4. If missing, ensure the MCP is defined in your Cursor user settings and
-   Cloud Agents has access to your MCP profile
-
-The automation prompt must reference the exact server identifier:
-`Airship MCP server: user-M6 PROD` (match the name from Step 1).
-
-### 1.7 (Optional) Bulk-configure many clients with the generator
+### 1.6 (Optional) Bulk-configure many clients with the generator
 
 > **Skip this entire section** if you configured your MCP servers manually in
-> 1.6 — it is a convenience for setting up **many** clients from scratch, not a
-> requirement. It produces the same `mcp.json` entries as 1.6, just in bulk.
+> 1.5 — it is a convenience for setting up **many** clients from scratch, not a
+> requirement. It produces the same `mcp.json` entries as 1.5, just in bulk.
 
 The repo ships an optional helper, `scripts/generate_mcp_config.py`, that writes
 Airship MCP entries into `~/.cursor/mcp.json` from a local secrets file.
@@ -215,10 +192,10 @@ Airship MCP entries into `~/.cursor/mcp.json` from a local secrets file.
 
 2. Edit `clients.secrets.yml`:
    - Set `settings.airship_mcp_dir` to the local path of the `airship-mcp`
-     package (same path used in 1.6).
+     package (same path used in 1.5).
    - Under `secrets:`, add one block per client keyed by the MCP server name
-     **without** the `user-` prefix (e.g. `HM PROD`), with the `app_key`,
-     `client_id`, `client_secret` from section 1.5.
+     **without** the `user-` prefix (e.g. `CLIENT-A PROD`), with the `app_key`,
+     `client_id`, `client_secret` from section 1.4.
 
 3. Preview, then apply:
 
@@ -232,85 +209,90 @@ Airship MCP entries into `~/.cursor/mcp.json` from a local secrets file.
    Airship entries listed in your secrets file. Use `--print` to dump the
    resulting entries with credentials redacted.
 
-4. Reload MCP servers in Cursor (or restart) and smoke-test as in 1.6 Step 3.
+4. Reload MCP servers in Cursor (or restart) and smoke-test as in 1.5 Step 3.
 
 > `clients.secrets.yml`, `mcp.json`, and `mcp.json.bak` are all gitignored —
 > they never leave your machine.
 
 ---
 
-## Part 2 — Gather client info (once per client)
+## Part 2 — Register the client (once per client)
 
-You need three pieces of information before setting up the automation:
+### 2.1 Gather client info
+
+You need the following before running the skill for a client:
 
 | Info | How to get it |
 |---|---|
-| **Airship MCP server name** | Name from section 1.6 — Cursor MCP list, prefixed with `user-` (e.g. `user-HM PROD`) |
+| **Airship MCP server name** | Name from section 1.5 — prefixed with `user-` (e.g. `user-CLIENT-A PROD`) |
 | **Slack channel ID** | Right-click the channel in Slack → **Copy link** → the ID is the last segment of the URL, starting with `C` (e.g. `C0YYYYYYYY`) |
-| **Slack canvas ID** | Leave blank — the skill creates it on the first run and returns the ID |
-| **Slack team ID** | Default `T025Q1VP7` (Urban Airship workspace) — only change if the channel lives on another Slack workspace |
+| **Slack canvas ID** | Leave blank on first run — the skill creates it and returns the ID |
+| **Slack team ID** | Default `T025Q1VP7` (Airship CS workspace) — change only if the channel lives on a different Slack workspace |
 
 Optional:
 - **Custom thresholds**: any threshold from the default list you want to
   override for this client (e.g. `push_sends_drop_pct: 40`)
 
-### 2.1 Register the client in `clients.yml` (for multi-client runs)
+### 2.2 Add the client to your local `clients.yml`
 
-`clients.yml` (repo root) is the shared, **non-secret** registry that lets you
-run the skill for several clients from a single Cursor chat message. Add one
-entry per client (no credentials — those stay in `mcp.json`):
+`clients.yml` (repo root) is a **non-secret** registry that lets you run the
+skill for several clients from a single Cursor chat message. Each TAM maintains
+their own version locally — **do not commit real client data**.
+
+Add one entry per client (no credentials — those stay in `mcp.json`):
 
 ```yaml
 clients:
-  - name: M6
-    brand_name: M6 Group
-    airship_mcp: user-M6 PROD      # the MCP server name from 1.6
+  - name: Client A
+    brand_name: Client A Public Brand Name
+    airship_mcp: user-CLIENT-A PROD      # the MCP server name from 1.5
     slack_channel_id: C0XXXXXXXX
-    slack_canvas_id: F0XXXXXXXX    # leave blank on first run
+    slack_canvas_id: F0XXXXXXXX          # leave blank on first run
     region: eu
     alert_language: fr
     enabled: true
+    # custom_thresholds:
+    #   push_sends_drop_pct: 40
 ```
 
-Top-level `slack_workspace` / `slack_team_id` keys (already set to the Urban
-Airship workspace) build the clickable canvas link — change them only if your
-channels live on a different Slack workspace. After a first run, paste the
-returned canvas ID back into the entry so later runs reuse it.
+> `brand_name` is the **public-facing brand** used for web searches in root
+> cause analysis — use the consumer name rather than the internal project code
+> (e.g. the client's actual brand name, not their Airship project shorthand).
+> Defaults to `name` if omitted.
 
-### 2.2 Run modes (local, no hosting required)
+Top-level `slack_workspace` / `slack_team_id` keys (already set in `clients.yml`)
+build the clickable canvas link — change them only if your Slack channels live on
+a different workspace. After a first run, paste the returned canvas ID back into
+the entry so later runs reuse the same canvas.
 
-Once MCPs are configured (1.6) and clients are registered (2.1), trigger runs
-straight from Cursor chat with the relevant MCP servers enabled:
+### 2.3 Run modes
+
+Once MCPs are configured (1.5) and clients are registered (2.2), trigger runs
+from Cursor chat with the relevant MCP servers enabled:
 
 - **All clients**:
   `Run airship-kpi-monitor for all clients in clients.yml using rolling 7-day windows.`
 - **A subset**:
-  `Run airship-kpi-monitor for Harmonie Mutuelle and M6.`
+  `Run airship-kpi-monitor for Client A and Client B.`
 - **A single client**:
-  `Run airship-kpi-monitor for Harmonie Mutuelle.`
+  `Run airship-kpi-monitor for Client A.`
 - **Recurring in an open session** (via the `loop` skill):
   `/loop 1d Run airship-kpi-monitor for all clients in clients.yml` — runs
   immediately, then every 24h. Requires Cursor to stay open; uses your local
   MCP servers (no hosting needed).
 
-> **Advanced / optional**: for fully headless scheduling without Cursor open,
-> the `cursor-agent` CLI driven by an OS cron job can run the same prompt. This
-> is out of scope for this guide — the Cloud Agent automation (Part 4) remains
-> the supported hands-off path.
-
 ---
 
-## Part 3 — Manual test run (5 min)
+## Part 3 — First run (5 min)
 
-Before creating the scheduled automation, validate the skill works for this
-client.
+Before running regularly, validate the skill works for this client.
 
-**In Cursor chat**, type:
+**In Cursor chat**, with the client's MCP server enabled:
 
 ```
 Run airship-kpi-monitor for client {Client name}.
-Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"}
-Airship MCP server: {user-XX PROD}
+Brand name: {Client's public brand name}
+Airship MCP server: {user-CLIENT-A PROD}
 Slack channel ID: {C0XXXXXXXX}
 
 Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check
@@ -323,8 +305,8 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
 - [ ] Agent completes without errors
 - [ ] A Slack message appears in the client channel (or "no alerts" if
   everything is within thresholds)
-- [ ] The canvas is created — the agent prints `Canvas created: F0XXXXXXXXX`
-- [ ] Copy the canvas ID — you will need it for the automation
+- [ ] The canvas is created — the agent prints `Canvas ID: F0XXXXXXXXX`
+- [ ] Copy the canvas ID and paste it into your local `clients.yml` entry
 
 > **First run note**: Device delta metrics will show `n/a (canvas history
 > pending)` because the D-7 snapshot does not exist yet. This is expected.
@@ -332,59 +314,13 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
 
 ---
 
-## Part 4 — Create the daily Cloud Agent automation (10 min)
+## Part 4 — Adjusting thresholds for a client
 
-**In Cursor chat**, type:
+To override a threshold for one client, add it to `custom_thresholds` in your
+local `clients.yml`:
 
-```
-Create a daily Cloud Agent automation at 7:00 AM that runs
-airship-kpi-monitor for client {Client name} using rolling 7-day windows.
-
-Client name: {Client name}
-Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"}
-Airship MCP server: {user-XX PROD}
-Slack channel ID: {C0XXXXXXXX}
-Slack canvas ID: {F0XXXXXXXXX}
-Slack workspace: urbanairship
-Slack team ID: T025Q1VP7
-
-Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check.
-```
-
-The agent will open the Automations editor with the prefilled draft.
-
-**In the Automations editor, verify:**
-- [ ] Schedule: `daily` (every day, 07:00)
-- [ ] Execution mode: `Cloud` (not Local)
-- [ ] Workspace: `thomasfaro/airship-kpi-monitor`
-- [ ] MCPs listed: Airship client MCP + Slack MCP
-- [ ] Model: **claude-sonnet — always pick the latest version available** in the dropdown (do NOT pin a specific version number, do NOT enable extended thinking / reasoning mode). When a new Sonnet version appears in the list, switch to it — no other change needed.
-- [ ] Prompt contains the correct client config
-
-Click **Save**.
-
----
-
-## Part 5 — Validation run (2 min)
-
-1. In the Automations editor, click **Run** (manual trigger) on the automation
-   you just saved
-2. Wait for the run to complete (~1–2 minutes)
-3. Check:
-   - [ ] Slack channel: message posted (or "no alerts today" if within range)
-   - [ ] Slack canvas: row added to Devices History table, Last run updated
-
-The automation is live. It will run every morning at 07:00 UTC.
-
----
-
-## Part 6 — Adjusting thresholds for a client
-
-To override a threshold for one client, add it to the automation prompt under
-`Custom thresholds`:
-
-```
-Custom thresholds:
+```yaml
+custom_thresholds:
   push_sends_drop_pct: 40
   email_bounce_max: 3
 ```
@@ -398,11 +334,11 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `401 / 403` errors on Airship API | Wrong OAuth scopes (need exactly `rpt` + `tpl`) or expired credentials | In Airship **Settings → OAuth**, enable only `rpt` and `tpl`; refresh Client ID/Secret in Cursor MCP settings |
+| MCP server stays red | Wrong `uv` path or `airship-mcp` directory | Check `mcp.json` syntax; confirm `uv` and `airship-mcp` path are correct |
 | No Slack message posted | Volume below minimums, or no anomaly | Check agent log — it prints `New alerts: 0` |
-| Canvas link in alerts returns 404 | Wrong URL format (`app.slack.com/docs/{id}` without team ID) | Use `https://urbanairship.slack.com/docs/T025Q1VP7/{canvas_id}` — see SKILL.md |
-| Canvas not found | Wrong canvas ID in prompt | Re-run manual test to get correct ID |
-| Device delta shows `n/a` | Less than 7 daily runs completed | Wait — fills automatically after 7 days |
-| Automation didn't fire | Cloud Agents quota or workspace issue | Check [cursor.com/dashboard](https://cursor.com/dashboard?tab=cloud-agents) |
+| Canvas link in alerts is broken | URL missing team ID in path | Build URL as `https://{workspace}.slack.com/docs/{team_id}/{canvas_id}` — see SKILL.md |
+| Canvas not found | Wrong canvas ID in `clients.yml` | Re-run Part 3 to get the correct ID |
+| Device delta shows `n/a` | Less than 7 daily runs completed | Expected — fills automatically after 7 days |
 
 ---
 
@@ -412,7 +348,6 @@ All TAMs share the same skill from the GitHub repo. To update the logic or
 default thresholds:
 
 1. Edit `SKILL.md` in the repo
-2. Commit and push to `main`
-3. Cloud Agent automations pick up the new version on the next run
-4. TAMs using local testing run `git pull` in
-   `~/.cursor/skills/airship-kpi-monitor`
+2. Commit and push
+3. Each TAM runs `git pull` in `~/.cursor/skills/airship-kpi-monitor` to get
+   the latest version

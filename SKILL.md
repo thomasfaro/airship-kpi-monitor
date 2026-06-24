@@ -7,7 +7,7 @@ description: >-
   opt-in velocity, email metrics (including daily spam complaint and delay
   rates), web push, SMS sends and delivery rate, and custom events. Posts Slack alerts to a client channel and maintains a rich,
   source-traceable weekly canvas. Uses the Airship Reports API via MCP and the
-  Slack MCP plugin. Designed to run as a Cursor Cloud Agent automation.
+  Slack MCP plugin. Triggered from Cursor chat (one-off or /loop recurring).
 model: claude-sonnet
 # Always use the latest available Claude Sonnet version in the Cursor
 # Automations editor — do not pin a specific version number (e.g. 4-5, 4-6).
@@ -29,8 +29,8 @@ weekly canvas with today's snapshot.
 | Parameter | Required | Example |
 |---|---|---|
 | `Client name` | yes | `M6` |
-| `Brand name` | no — defaults to Client name | `M6 Group` |
-| `Airship MCP server` | yes | `user-M6 PROD` |
+| `Brand name` | no — defaults to Client name | `Client A Brand` |
+| `Airship MCP server` | yes | `user-CLIENT-A PROD` |
 | `Slack channel ID` | yes | `C0XXXXXXXX` |
 | `Slack canvas ID` | no — created on first run | `F0XXXXXXXX` |
 | `Slack workspace` | no — defaults to `urbanairship` | `urbanairship` |
@@ -39,9 +39,8 @@ weekly canvas with today's snapshot.
 
 `Brand name` is the **public-facing brand** used for web searches and news
 lookups in root cause analysis (Step 8b). Use the consumer-facing name rather
-than the internal project name — e.g. `Banque Populaire` instead of `BP PROD`,
-`Burger King France` instead of `BK PROD`, `Harmonie Mutuelle` instead of
-`HM PROD`. If omitted, falls back to `Client name`.
+than the internal project code — e.g. the client's public brand name rather
+than their Airship project shorthand. If omitted, falls back to `Client name`.
 
 ### Slack canvas link (`canvas_url`)
 
@@ -74,7 +73,7 @@ To find `slack_team_id` for another workspace: open any canvas in Slack →
 The skill supports two ways of supplying the inputs above:
 
 1. **Single-client run** — parameters passed directly in the prompt (the
-   classic Cloud Agent automation, or a one-off manual run). Used when the
+   one-off manual run). Used when the
    prompt contains a `Client name` / `Airship MCP server` block.
 
 2. **Manual multi-client run** — parameters read from the `clients.yml`
@@ -82,7 +81,7 @@ The skill supports two ways of supplying the inputs above:
    names one or more clients without giving their full config, or simply says
    "run airship-kpi-monitor" with no client block. This lets a TAM trigger the
    check for every configured client from a single Cursor chat message, with no
-   cron automation required.
+   no additional setup required.
 
 ### Manual multi-client run — procedure
 
@@ -96,7 +95,7 @@ operate in registry mode:
    - "all clients" / "run airship-kpi-monitor" (no name) → every entry with
      `enabled: true` (treat a missing `enabled` as `true`). Skip entries with
      `enabled: false`.
-   - One or more client names given (e.g. "for Harmonie Mutuelle and M6") →
+   - One or more client names given (e.g. "for Client A and Client B") →
      only the matching entries, matched case-insensitively on `name`. If a
      named client is not found in the registry, report it and continue with the
      others.
@@ -757,8 +756,8 @@ top campaigns into `possible_cause`.
 #### 4. External context search (best-effort)
 
 Use `brand_name` (or `client_name` if not set) for all web searches —
-**never use the internal MCP server name** (e.g. search for
-`"Banque Populaire"`, not `"BP PROD"`).
+**never use the internal MCP server name** (e.g. search for the client's
+public brand name, not their Airship project shorthand).
 
 Perform web searches to find recent news that could explain the variation:
 - `"{brand_name}" application mobile {month} {year}`
@@ -809,9 +808,8 @@ from the canvas in Step 7.
 
 **Only if there are new alerts or resolutions to post.**
 
-`{canvas_url}` — computed at run start (see **Slack canvas link** above). Example
-for Carrefour:
-`https://urbanairship.slack.com/docs/T025Q1VP7/F0BCJHJM68H`
+`{canvas_url}` — computed at run start (see **Slack canvas link** above). Example:
+`https://urbanairship.slack.com/docs/T025Q1VP7/F0XXXXXXXXX`
 
 #### New alerts message
 
