@@ -19,9 +19,10 @@ plus a client registry:
   canvas.
 - `MODOP.md` — manual step-by-step setup guide for TAMs (fallback for SETUP.md).
 - `README.md` — product overview.
-- `clients.example.yml` — **non-secret** client registry TEMPLATE. Each TAM
-  copies it to a local, gitignored `clients.yml` and fills in their own clients.
-  No real client data is ever committed.
+- `clients.yml` — **non-secret** client registry. It is **local + gitignored**:
+  the repo never ships or commits it. Each TAM creates their own (template lives
+  in `MODOP.md` §2.2 / `SETUP.md`) and fills in their own clients. No real client
+  data is ever committed.
 
 The only executable code is **one optional helper**:
 `scripts/generate_mcp_config.py`. It is a convenience for bulk-creating Airship
@@ -56,8 +57,8 @@ Airship MCP server name and a Slack channel name.
 - **Credentials live ONLY in `~/.cursor/mcp.json`** (per-client OAuth, region).
   They are never stored in the repo.
 - **`clients.yml` is routing only** (MCP server name, Slack channel, canvas ID,
-  region) and is **local + gitignored** — copied from `clients.example.yml`.
-  Real client data is never committed; the repo only ships the template.
+  region) and is **local + gitignored** — created by each TAM, never committed.
+  Real client data is never committed; the repo ships no client registry.
 - `scripts/generate_mcp_config.py` + `clients.secrets.yml` are the optional bulk
   path to populate `mcp.json`; `clients.yml`, `clients.secrets.yml`, `mcp.json`,
   and `mcp.json.bak` are all gitignored.

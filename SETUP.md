@@ -73,8 +73,27 @@ project — see [MODOP.md](MODOP.md) §1.4 if the user needs to create them.
 
 ### Step 2 — Create the local registry
 
-- If `<skill dir>/clients.yml` is missing, create it by copying
-  `<skill dir>/clients.example.yml` → `<skill dir>/clients.yml`.
+- If `<skill dir>/clients.yml` is missing, create it (it is gitignored — never
+  committed). Seed it with this routing-only template, then fill in clients in
+  Step 5:
+  ```yaml
+  # Airship KPI Monitor — client registry (ROUTING ONLY — NO SECRETS).
+  # Credentials live ONLY in ~/.cursor/mcp.json. This file just routes the skill
+  # to an already-configured Airship MCP server and a Slack channel.
+  slack_workspace: urbanairship   # subdomain in https://<workspace>.slack.com
+  slack_team_id: T025Q1VP7        # team ID segment in the canvas URL path
+
+  clients:
+    # - name: Client A
+    #   brand_name: Client A Brand Name
+    #   airship_mcp: user-CLIENT-A PROD   # exact MCP server id in ~/.cursor/mcp.json
+    #   slack_channel: cs-fr-client-a     # channel name without '#'
+    #   slack_canvas_id:                  # leave blank on first run
+    #   region: eu
+    #   enabled: true
+    #   # custom_thresholds:
+    #   #   push_sends_drop_pct: 40
+  ```
 - If it already exists, keep it and append to it later (Step 5).
 
 ### Step 3 — Render the setup-tracker canvas

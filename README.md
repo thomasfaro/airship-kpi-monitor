@@ -94,12 +94,13 @@ To update later:
 cd ~/.cursor/skills/airship-kpi-monitor && git pull
 ```
 
-Create your local client registry from the committed template (your copy is
-gitignored — it stays on your machine and is never pushed):
+Create your own **local, gitignored** `clients.yml` in the skill folder (it
+stays on your machine and is never pushed — see the template in the "Client
+registry" section below):
 
 ```bash
 cd ~/.cursor/skills/airship-kpi-monitor
-cp clients.example.yml clients.yml
+$EDITOR clients.yml   # create it with the template below
 ```
 
 Then follow [MODOP.md](MODOP.md) to configure each client's Airship MCP server
@@ -137,12 +138,12 @@ local MCP servers.
 
 ## Client registry — local `clients.yml`
 
-The repo ships only a template, [`clients.example.yml`](clients.example.yml).
-Copy it to a **local, gitignored `clients.yml`** (`cp clients.example.yml
-clients.yml`) and keep your own clients there. The agent reads your local
-`clients.yml` and runs the full workflow once per selected client, sequentially.
-Your client list never leaves your machine — the repo only contains the skill
-and the template.
+`clients.yml` is **local and gitignored** — the repo never ships or commits it.
+Create your own in the skill folder (`~/.cursor/skills/airship-kpi-monitor/`)
+using the template below and keep your own clients there. The agent reads your
+local `clients.yml` and runs the full workflow once per selected client,
+sequentially. Your client list never leaves your machine — the repo only
+contains the skill.
 
 > **Credentials vs routing**: `clients.yml` holds **no secrets** — only routing
 > (MCP server name, Slack channel, region). OAuth credentials live solely in
@@ -152,15 +153,19 @@ and the template.
 > `clients.secrets.yml`) can create the `mcp.json` entries in bulk — see
 > MODOP §1.6. Skip it if your MCPs are already configured.
 
-Registry entry format (see [`clients.example.yml`](clients.example.yml) for the
-full reference):
+Registry format (routing only — no secrets; see [MODOP.md](MODOP.md) §2.2 for
+the full field reference):
 
 ```yaml
+# ROUTING ONLY — NO SECRETS. Credentials live in ~/.cursor/mcp.json.
+slack_workspace: urbanairship      # subdomain in https://<workspace>.slack.com
+slack_team_id: T025Q1VP7           # team ID segment in the canvas URL path
+
 clients:
   - name: Client A
     brand_name: Client A Brand Name
     airship_mcp: user-CLIENT-A PROD    # MCP server name from ~/.cursor/mcp.json
-    slack_channel: cs-fr-client-a
+    slack_channel: cs-fr-client-a      # channel name without '#'
     slack_canvas_id: F0XXXXXXXX        # leave blank on first run
     region: eu
     enabled: true
@@ -234,7 +239,6 @@ the latest version picks up the new defaults on their next run.
 airship-kpi-monitor/
 ├── SKILL.md                     ← core logic (read by Cursor agents)
 ├── SETUP.md                     ← agent-guided installer playbook
-├── clients.example.yml          ← client registry TEMPLATE (copy to local clients.yml)
 ├── clients.secrets.example.yml  ← template for the optional MCP generator
 ├── scripts/
 │   └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json

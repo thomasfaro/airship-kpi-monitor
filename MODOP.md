@@ -241,26 +241,26 @@ Optional:
 
 ### 2.2 Add the client to your local `clients.yml`
 
-The repo only ships a template, `clients.example.yml`. On first setup, create
-your own **local** registry from it (your copy is gitignored — never pushed):
+`clients.yml` is your own **local, gitignored** registry — the repo never ships
+or commits it. On first setup, create it yourself in the skill folder
+(`~/.cursor/skills/airship-kpi-monitor/clients.yml`) with the template below.
+It is a **non-secret** registry that lets you run the skill for several clients
+from a single Cursor chat message. Each TAM maintains their own version
+locally — **client data never goes to git**.
 
-```bash
-cd ~/.cursor/skills/airship-kpi-monitor
-cp clients.example.yml clients.yml
-```
-
-`clients.yml` is a **non-secret** registry that lets you run the skill for
-several clients from a single Cursor chat message. Each TAM maintains their own
-version locally — **client data never goes to git**.
-
-Add one entry per client (no credentials — those stay in `mcp.json`):
+Create `clients.yml` with this structure and add one entry per client (no
+credentials — those stay in `mcp.json`):
 
 ```yaml
+# ROUTING ONLY — NO SECRETS. Credentials live in ~/.cursor/mcp.json.
+slack_workspace: urbanairship   # subdomain in https://<workspace>.slack.com
+slack_team_id: T025Q1VP7        # team ID segment in the canvas URL path
+
 clients:
   - name: Client A
     brand_name: Client A Public Brand Name
     airship_mcp: user-CLIENT-A PROD      # the MCP server name from 1.5
-    slack_channel: cs-fr-client-a
+    slack_channel: cs-fr-client-a        # channel name without '#'
     slack_canvas_id: F0XXXXXXXX          # leave blank on first run
     region: eu
     enabled: true
