@@ -57,7 +57,31 @@ and reads the D-7 value from it on the next run.
 
 ---
 
-## Installation (once per TAM workstation)
+## Automated setup (agent-guided) — recommended
+
+The fastest way to install and configure everything is to let the Cursor agent
+do it for you. In a Cursor chat, paste:
+
+```
+Clone https://github.com/thomasfaro/airship-kpi-monitor into
+~/.cursor/skills/airship-kpi-monitor and follow its SETUP.md to install and
+configure the skill locally. Ask me for the values you need.
+```
+
+The agent reads [SETUP.md](SETUP.md) and walks you through it interactively: it
+checks prerequisites, asks you for each client's OAuth credentials and Slack
+channel, writes the Airship MCP server into your local `~/.cursor/mcp.json`
+(backed up first), creates your local `clients.yml`, smoke-tests the connection,
+and shows a setup-tracker canvas with the local file locations and progress.
+
+Credentials are written only to your local `~/.cursor/mcp.json` — never to the
+repo, `clients.yml`, or the canvas.
+
+---
+
+## Manual installation (alternative)
+
+Prefer to do it by hand? Clone the skill:
 
 ```bash
 git clone https://github.com/thomasfaro/airship-kpi-monitor \
@@ -210,11 +234,12 @@ the latest version picks up the new defaults on their next run.
 ```
 airship-kpi-monitor/
 ├── SKILL.md                     ← core logic (read by Cursor agents)
+├── SETUP.md                     ← agent-guided installer playbook
 ├── clients.example.yml          ← client registry TEMPLATE (copy to local clients.yml)
 ├── clients.secrets.example.yml  ← template for the optional MCP generator
 ├── scripts/
 │   └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
-├── MODOP.md                     ← step-by-step setup guide for TAMs
+├── MODOP.md                     ← manual step-by-step setup guide for TAMs
 └── README.md                    ← this file
 ```
 

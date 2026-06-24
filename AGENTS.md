@@ -9,7 +9,15 @@ conventional software project. The deliverable is a small set of Markdown files
 plus a client registry:
 
 - `SKILL.md` — the core logic/playbook read by the Cursor agent at runtime.
-- `MODOP.md` — step-by-step setup guide for TAMs (per-client onboarding).
+- `SETUP.md` — agent-executable installer playbook. When a user asks to
+  "install/setup this skill", read it and perform the steps: clone the skill,
+  collect each client's inputs via the question tool, edit `~/.cursor/mcp.json`
+  (creds — backed up first), create the local `clients.yml`, and smoke-test. It
+  also specs a **local-only, secret-free setup-tracker canvas**
+  (`~/.cursor/projects/<workspace>/canvases/airship-kpi-setup.canvas.tsx`, never
+  committed). Credentials are never written to the repo, `clients.yml`, or the
+  canvas.
+- `MODOP.md` — manual step-by-step setup guide for TAMs (fallback for SETUP.md).
 - `README.md` — product overview.
 - `clients.example.yml` — **non-secret** client registry TEMPLATE. Each TAM
   copies it to a local, gitignored `clients.yml` and fills in their own clients.

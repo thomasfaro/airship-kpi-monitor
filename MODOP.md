@@ -4,6 +4,12 @@
 > for a new client.  
 > **Time**: ~15 minutes per client (after the one-time prerequisites).
 
+> **Prefer a guided setup?** Let the Cursor agent do it for you: paste the
+> agent-guided prompt from the [README](README.md#automated-setup-agent-guided),
+> which runs the [SETUP.md](SETUP.md) playbook (it asks for your values, edits
+> `~/.cursor/mcp.json`, creates `clients.yml`, and smoke-tests). This MODOP is
+> the **manual reference / fallback** for doing the same steps by hand.
+
 ---
 
 ## Part 1 — Prerequisites (once per TAM workstation)
