@@ -151,6 +151,12 @@ Replace:
 
 > **Security**: `mcp.json` contains secrets — it lives only on your machine,
 > never commit it to git. Do not share screenshots of this file.
+>
+> **Where credentials live**: OAuth credentials are stored **only** here, in
+> `~/.cursor/mcp.json`. The shared `clients.yml` registry (Part 2) holds **no
+> secrets** — it only routes the skill to an MCP server already configured in
+> Cursor (by name) and to a Slack channel. This keeps creds local and the
+> registry safe to commit and share.
 
 `AIRSHIP_RTDS_BEARER_TOKEN` is **not required** for KPI monitoring — omit it
 unless you use RTDS features on the same MCP entry.
@@ -192,6 +198,45 @@ Local MCP configuration is not enough for scheduled Cloud Agent runs.
 The automation prompt must reference the exact server identifier:
 `Airship MCP server: user-M6 PROD` (match the name from Step 1).
 
+### 1.7 (Optional) Bulk-configure many clients with the generator
+
+> **Skip this entire section** if you configured your MCP servers manually in
+> 1.6 — it is a convenience for setting up **many** clients from scratch, not a
+> requirement. It produces the same `mcp.json` entries as 1.6, just in bulk.
+
+The repo ships an optional helper, `scripts/generate_mcp_config.py`, that writes
+Airship MCP entries into `~/.cursor/mcp.json` from a local secrets file.
+
+1. Copy the template (the copy is gitignored — it holds secrets):
+
+   ```bash
+   cp clients.secrets.example.yml clients.secrets.yml
+   ```
+
+2. Edit `clients.secrets.yml`:
+   - Set `settings.airship_mcp_dir` to the local path of the `airship-mcp`
+     package (same path used in 1.6).
+   - Under `secrets:`, add one block per client keyed by the MCP server name
+     **without** the `user-` prefix (e.g. `HM PROD`), with the `app_key`,
+     `client_id`, `client_secret` from section 1.5.
+
+3. Preview, then apply:
+
+   ```bash
+   uv run --with pyyaml scripts/generate_mcp_config.py --dry-run   # preview
+   uv run --with pyyaml scripts/generate_mcp_config.py             # write
+   ```
+
+   The script backs up `~/.cursor/mcp.json` before writing, preserves every
+   server it did not create (e.g. the Slack plugin), and only touches the
+   Airship entries listed in your secrets file. Use `--print` to dump the
+   resulting entries with credentials redacted.
+
+4. Reload MCP servers in Cursor (or restart) and smoke-test as in 1.6 Step 3.
+
+> `clients.secrets.yml`, `mcp.json`, and `mcp.json.bak` are all gitignored —
+> they never leave your machine.
+
 ---
 
 ## Part 2 — Gather client info (once per client)
@@ -208,6 +253,50 @@ You need three pieces of information before setting up the automation:
 Optional:
 - **Custom thresholds**: any threshold from the default list you want to
   override for this client (e.g. `push_sends_drop_pct: 40`)
+
+### 2.1 Register the client in `clients.yml` (for multi-client runs)
+
+`clients.yml` (repo root) is the shared, **non-secret** registry that lets you
+run the skill for several clients from a single Cursor chat message. Add one
+entry per client (no credentials — those stay in `mcp.json`):
+
+```yaml
+clients:
+  - name: M6
+    brand_name: M6 Group
+    airship_mcp: user-M6 PROD      # the MCP server name from 1.6
+    slack_channel_id: C0XXXXXXXX
+    slack_canvas_id: F0XXXXXXXX    # leave blank on first run
+    region: eu
+    alert_language: fr
+    enabled: true
+```
+
+Top-level `slack_workspace` / `slack_team_id` keys (already set to the Urban
+Airship workspace) build the clickable canvas link — change them only if your
+channels live on a different Slack workspace. After a first run, paste the
+returned canvas ID back into the entry so later runs reuse it.
+
+### 2.2 Run modes (local, no hosting required)
+
+Once MCPs are configured (1.6) and clients are registered (2.1), trigger runs
+straight from Cursor chat with the relevant MCP servers enabled:
+
+- **All clients**:
+  `Run airship-kpi-monitor for all clients in clients.yml using rolling 7-day windows.`
+- **A subset**:
+  `Run airship-kpi-monitor for Harmonie Mutuelle and M6.`
+- **A single client**:
+  `Run airship-kpi-monitor for Harmonie Mutuelle.`
+- **Recurring in an open session** (via the `loop` skill):
+  `/loop 1d Run airship-kpi-monitor for all clients in clients.yml` — runs
+  immediately, then every 24h. Requires Cursor to stay open; uses your local
+  MCP servers (no hosting needed).
+
+> **Advanced / optional**: for fully headless scheduling without Cursor open,
+> the `cursor-agent` CLI driven by an OS cron job can run the same prompt. This
+> is out of scope for this guide — the Cloud Agent automation (Part 4) remains
+> the supported hands-off path.
 
 ---
 

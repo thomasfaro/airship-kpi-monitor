@@ -1,0 +1,15 @@
+# Local-only files — never commit credentials or machine-specific MCP config.
+
+# Optional bulk-generator secrets (OAuth creds + local airship-mcp path).
+clients.secrets.yml
+*.secrets.yml
+
+# Cursor MCP config (lives in ~/.cursor/mcp.json; only copied here for debugging).
+mcp.json
+mcp.json.bak
+
+# Python / tooling cruft
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
