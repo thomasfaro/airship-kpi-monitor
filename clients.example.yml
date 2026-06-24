@@ -1,27 +1,27 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Airship KPI Monitor — client registry (ROUTING ONLY — NO SECRETS)
+# Airship KPI Monitor — client registry TEMPLATE (ROUTING ONLY — NO SECRETS)
 #
-# Central list of every client the skill is configured for. Used for MANUAL
-# multi-client runs from Cursor chat (see SKILL.md → "Manual multi-client run").
+# ▶ This is a TEMPLATE committed to the repo. Do NOT put real client data here.
+#   Copy it to a LOCAL, gitignored `clients.yml` and fill in your own clients:
+#
+#       cp clients.example.yml clients.yml
+#
+#   `clients.yml` is gitignored — your client list stays on your machine and is
+#   never pushed. The repo only ships the skill + this template.
 #
 # IMPORTANT — credentials are NOT stored here.
 #   OAuth credentials (app key / client id / client secret) live ONLY in your
 #   local Cursor MCP config (~/.cursor/mcp.json), configured once per client
-#   (see MODOP.md §1.6). This file only routes the skill to an already-configured
-#   MCP server (`airship_mcp`) and a Slack channel. Safe to commit and share.
-#
-# IMPORTANT — client names and IDs are NOT stored here.
-#   Real client names, Slack channel IDs, and canvas IDs are LOCAL ONLY.
-#   Each TAM maintains their own version of this file locally. Do NOT commit
-#   real client data to git.
+#   (see MODOP.md §1.5). This file only routes the skill to an already-configured
+#   MCP server (`airship_mcp`) and a Slack channel.
 #
 # How to launch (in Cursor chat, with the relevant MCP servers enabled):
 #   • All clients:        "Run airship-kpi-monitor for all clients in clients.yml"
 #   • A subset:           "Run airship-kpi-monitor for Client A and Client B"
 #   • A single client:    "Run airship-kpi-monitor for Client A"
 #
-# The agent reads this file, then runs the full daily workflow (SKILL.md
-# Steps 0–11) once per selected client, using that client's parameters below.
+# The agent reads your local `clients.yml`, then runs the full daily workflow
+# (SKILL.md Steps 0–11) once per selected client, using that client's params.
 #
 # Precedence: if a parameter is also given directly in the chat prompt, the
 # prompt value wins for that run (lets you override a channel/threshold ad hoc).
@@ -53,7 +53,7 @@ slack_team_id: T025Q1VP7            # team ID segment in the canvas URL path
 # ─────────────────────────────────────────────────────────────────────────────
 
 clients:
-  # ── Fill in your own clients below. Do NOT commit real client data. ─────────
+  # ── Example entries. Copy this file to clients.yml, then fill in your own. ───
   # - name: Client A
   #   brand_name: Client A Brand Name
   #   airship_mcp: user-CLIENT-A PROD

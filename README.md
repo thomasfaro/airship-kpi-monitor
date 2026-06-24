@@ -70,8 +70,16 @@ To update later:
 cd ~/.cursor/skills/airship-kpi-monitor && git pull
 ```
 
+Create your local client registry from the committed template (your copy is
+gitignored — it stays on your machine and is never pushed):
+
+```bash
+cd ~/.cursor/skills/airship-kpi-monitor
+cp clients.example.yml clients.yml
+```
+
 Then follow [MODOP.md](MODOP.md) to configure each client's Airship MCP server
-in Cursor and register the client in your local `clients.yml`.
+in Cursor and add the client to your local `clients.yml`.
 
 ---
 
@@ -103,21 +111,25 @@ local MCP servers.
 
 ---
 
-## Client registry — `clients.yml`
+## Client registry — local `clients.yml`
 
-Keep every client in [`clients.yml`](clients.yml), then trigger the check from
-Cursor chat. The agent reads the registry and runs the full workflow once per
-selected client, sequentially.
+The repo ships only a template, [`clients.example.yml`](clients.example.yml).
+Copy it to a **local, gitignored `clients.yml`** (`cp clients.example.yml
+clients.yml`) and keep your own clients there. The agent reads your local
+`clients.yml` and runs the full workflow once per selected client, sequentially.
+Your client list never leaves your machine — the repo only contains the skill
+and the template.
 
 > **Credentials vs routing**: `clients.yml` holds **no secrets** — only routing
 > (MCP server name, Slack channel, region). OAuth credentials live solely in
 > your local `~/.cursor/mcp.json`, configured once per client (see
-> [MODOP.md](MODOP.md) §1.6). Setting up many clients at once? An optional
+> [MODOP.md](MODOP.md) §1.5). Setting up many clients at once? An optional
 > generator (`scripts/generate_mcp_config.py` + a gitignored
 > `clients.secrets.yml`) can create the `mcp.json` entries in bulk — see
-> MODOP §1.7. Skip it if your MCPs are already configured.
+> MODOP §1.6. Skip it if your MCPs are already configured.
 
-Registry entry format (see [`clients.yml`](clients.yml) for the full reference):
+Registry entry format (see [`clients.example.yml`](clients.example.yml) for the
+full reference):
 
 ```yaml
 clients:
@@ -198,7 +210,7 @@ the latest version picks up the new defaults on their next run.
 ```
 airship-kpi-monitor/
 ├── SKILL.md                     ← core logic (read by Cursor agents)
-├── clients.yml                  ← client registry template (non-secret routing)
+├── clients.example.yml          ← client registry TEMPLATE (copy to local clients.yml)
 ├── clients.secrets.example.yml  ← template for the optional MCP generator
 ├── scripts/
 │   └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json

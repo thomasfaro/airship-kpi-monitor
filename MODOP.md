@@ -235,9 +235,17 @@ Optional:
 
 ### 2.2 Add the client to your local `clients.yml`
 
-`clients.yml` (repo root) is a **non-secret** registry that lets you run the
-skill for several clients from a single Cursor chat message. Each TAM maintains
-their own version locally — **do not commit real client data**.
+The repo only ships a template, `clients.example.yml`. On first setup, create
+your own **local** registry from it (your copy is gitignored — never pushed):
+
+```bash
+cd ~/.cursor/skills/airship-kpi-monitor
+cp clients.example.yml clients.yml
+```
+
+`clients.yml` is a **non-secret** registry that lets you run the skill for
+several clients from a single Cursor chat message. Each TAM maintains their own
+version locally — **client data never goes to git**.
 
 Add one entry per client (no credentials — those stay in `mcp.json`):
 
@@ -260,7 +268,7 @@ clients:
 > (e.g. the client's actual brand name, not their Airship project shorthand).
 > Defaults to `name` if omitted.
 
-Top-level `slack_workspace` / `slack_team_id` keys (already set in `clients.yml`)
+Top-level `slack_workspace` / `slack_team_id` keys (already set in the template)
 build the clickable canvas link — change them only if your Slack channels live on
 a different workspace. After a first run, paste the returned canvas ID back into
 the entry so later runs reuse the same canvas.

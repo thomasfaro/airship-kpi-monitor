@@ -1,4 +1,7 @@
-# Local-only files — never commit credentials or machine-specific MCP config.
+# Local-only files — never commit credentials, client data, or machine config.
+
+# Each TAM's own client list — copied from clients.example.yml, kept local.
+clients.yml
 
 # Optional bulk-generator secrets (OAuth creds + local airship-mcp path).
 clients.secrets.yml

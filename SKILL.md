@@ -76,20 +76,22 @@ The skill supports two ways of supplying the inputs above:
    one-off manual run). Used when the
    prompt contains a `Client name` / `Airship MCP server` block.
 
-2. **Manual multi-client run** — parameters read from the `clients.yml`
-   registry in this repo. Used when the prompt asks to run for "all clients",
-   names one or more clients without giving their full config, or simply says
-   "run airship-kpi-monitor" with no client block. This lets a TAM trigger the
-   check for every configured client from a single Cursor chat message, with no
-   no additional setup required.
+2. **Manual multi-client run** — parameters read from the TAM's **local**
+   `clients.yml` registry (gitignored; copied from `clients.example.yml`). Used
+   when the prompt asks to run for "all clients", names one or more clients
+   without giving their full config, or simply says "run airship-kpi-monitor"
+   with no client block. This lets a TAM trigger the check for every configured
+   client from a single Cursor chat message, with no additional setup required.
 
 ### Manual multi-client run — procedure
 
 When the prompt does **not** contain a full single-client parameter block,
 operate in registry mode:
 
-1. **Read the registry**: open `clients.yml` at the repo root and parse the
-   `clients:` list. If the file is missing or empty, report it and stop.
+1. **Read the registry**: open the local `clients.yml` in the skill folder and
+   parse the `clients:` list. If the file is missing, tell the user to create it
+   with `cp clients.example.yml clients.yml` and fill in their clients, then
+   stop. If it is empty, report it and stop.
 
 2. **Select which clients to run**:
    - "all clients" / "run airship-kpi-monitor" (no name) → every entry with

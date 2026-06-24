@@ -11,8 +11,9 @@ plus a client registry:
 - `SKILL.md` — the core logic/playbook read by the Cursor agent at runtime.
 - `MODOP.md` — step-by-step setup guide for TAMs (per-client onboarding).
 - `README.md` — product overview.
-- `clients.yml` — shared, **non-secret** client registry (routing only) used for
-  manual multi-client runs.
+- `clients.example.yml` — **non-secret** client registry TEMPLATE. Each TAM
+  copies it to a local, gitignored `clients.yml` and fills in their own clients.
+  No real client data is ever committed.
 
 The only executable code is **one optional helper**:
 `scripts/generate_mcp_config.py`. It is a convenience for bulk-creating Airship
@@ -28,7 +29,7 @@ The "application" is `SKILL.md` executed by a **Cursor agent** (model: latest
 Claude Sonnet) triggered from Cursor chat — one-off or recurring via `/loop`.
 Each run:
 
-1. Reads `SKILL.md` (and `clients.yml` for multi-client runs).
+1. Reads `SKILL.md` (and the TAM's local `clients.yml` for multi-client runs).
 2. Calls the **Airship Reports API** via an **Airship MCP server** (`call_airship_api`).
 3. Computes rolling 7-day-window deltas and evaluates thresholds.
 4. Posts Slack alerts via the **Slack MCP** (`slack_send_message`) and maintains
@@ -47,10 +48,11 @@ Airship MCP server name and a Slack channel ID.
 - **Credentials live ONLY in `~/.cursor/mcp.json`** (per-client OAuth, region).
   They are never stored in the repo.
 - **`clients.yml` is routing only** (MCP server name, Slack channel, canvas ID,
-  region) and is safe to commit/share.
+  region) and is **local + gitignored** — copied from `clients.example.yml`.
+  Real client data is never committed; the repo only ships the template.
 - `scripts/generate_mcp_config.py` + `clients.secrets.yml` are the optional bulk
-  path to populate `mcp.json`; `clients.secrets.yml`, `mcp.json`, and
-  `mcp.json.bak` are all gitignored.
+  path to populate `mcp.json`; `clients.yml`, `clients.secrets.yml`, `mcp.json`,
+  and `mcp.json.bak` are all gitignored.
 
 ### Required external integrations (NOT installable from this repo)
 
