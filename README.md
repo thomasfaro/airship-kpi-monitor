@@ -3,8 +3,13 @@
 Daily KPI monitoring for Airship projects — posts Slack alerts when significant
 metric variations are detected, and maintains a weekly canvas summary.
 
-Built as a [Cursor Skill](https://cursor.com) running on **Cloud Agents** (no
-server required). One automation per client, deployed in minutes by any TAM.
+Built as a [Cursor Skill](https://cursor.com). Run it two ways:
+
+- **Manual multi-client** — list every client in [`clients.yml`](clients.yml)
+  and trigger the check for all of them (or a subset) from a single Cursor chat
+  message. No cron, no server, no per-client automation.
+- **Cloud Agent automation** — one scheduled automation per client (requires
+  the client's Airship MCP to be available to Cloud Agents).
 
 ---
 
@@ -75,7 +80,51 @@ no action needed for them after a `git push` to `main`.
 
 ---
 
-## Setup per client
+## Manual multi-client runs (recommended)
+
+Keep every client in [`clients.yml`](clients.yml), then trigger the check from
+Cursor chat — no automation needed. The agent reads the registry and runs the
+full workflow once per selected client, sequentially.
+
+```
+# all enabled clients
+Run airship-kpi-monitor for all clients in clients.yml using rolling 7-day windows.
+
+# a subset
+Run airship-kpi-monitor for Harmonie Mutuelle and M6.
+
+# a single client
+Run airship-kpi-monitor for Harmonie Mutuelle.
+```
+
+Requirements for a manual run:
+- The Airship MCP server for each selected client must be enabled in your
+  Cursor session (the `airship_mcp` value from `clients.yml`).
+- The Slack MCP plugin must be enabled and authenticated.
+
+Registry entry format (see [`clients.yml`](clients.yml) for the full reference):
+
+```yaml
+clients:
+  - name: Harmonie Mutuelle
+    brand_name: Harmonie Mutuelle
+    airship_mcp: user-HM PROD
+    slack_channel_id: C0XXXXXXXX
+    slack_canvas_id: F0XXXXXXXX   # blank on first run; paste the printed ID back
+    alert_language: fr
+    enabled: true
+    # custom_thresholds:
+    #   push_sends_drop_pct: 40
+```
+
+On a client's **first** run, leave `slack_canvas_id` blank — the skill creates
+the canvas and prints the new ID. Paste it back into `clients.yml` so the next
+run reuses the same canvas (the canvas is the persistent memory for D-7 device
+deltas).
+
+---
+
+## Setup per client (Cloud Agent automation)
 
 See [MODOP.md](MODOP.md) for the full step-by-step guide.
 
@@ -83,6 +132,10 @@ Quick summary:
 1. Run the skill manually once in Cursor chat to create the canvas
 2. Create a Cloud Agent automation (daily, 07:00, this repo as workspace)
 3. Paste the canvas ID returned by step 1 into the automation prompt
+
+> **Note:** Cloud Agents can only use **hosted** MCP servers. A stdio Airship
+> MCP (run locally via `uv`) is not reachable from a Cloud Agent — use the
+> manual multi-client mode above until the Airship MCP is hosted remotely.
 
 ---
 
@@ -161,9 +214,10 @@ Cloud Agent automations pick up the change on their next run.
 
 ```
 airship-kpi-monitor/
-├── SKILL.md    ← core logic (read by Cursor agents)
-├── MODOP.md    ← step-by-step setup guide for TAMs
-└── README.md   ← this file
+├── SKILL.md      ← core logic (read by Cursor agents)
+├── clients.yml   ← client registry for manual multi-client runs
+├── MODOP.md      ← step-by-step setup guide for TAMs
+└── README.md     ← this file
 ```
 
 ---

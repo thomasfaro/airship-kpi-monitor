@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Airship KPI Monitor — client registry
+#
+# Central list of every client the skill is configured for. Used for MANUAL
+# multi-client runs from Cursor chat (see SKILL.md → "Manual multi-client run").
+#
+# How to launch (in Cursor chat, with the relevant MCP servers enabled):
+#   • All clients:        "Run airship-kpi-monitor for all clients in clients.yml"
+#   • A subset:           "Run airship-kpi-monitor for Harmonie Mutuelle and M6"
+#   • A single client:    "Run airship-kpi-monitor for Harmonie Mutuelle"
+#
+# The agent reads this file, then runs the full daily workflow (SKILL.md
+# Steps 0–11) once per selected client, using that client's parameters below.
+#
+# Precedence: if a parameter is also given directly in the chat prompt, the
+# prompt value wins for that run (lets you override a channel/threshold ad hoc).
+#
+# Field reference:
+#   name             (required) Client name shown in Slack/canvas headers.
+#   brand_name       (optional) Public-facing brand for web searches in root
+#                               cause analysis. Defaults to `name`.
+#   airship_mcp      (required) Exact Cursor MCP server identifier (prefixed
+#                               with `user-` for user MCP servers).
+#   slack_channel_id (required) Target Slack channel ID (starts with C).
+#   slack_canvas_id  (optional) Canvas ID. Leave blank on first run — the skill
+#                               creates the canvas and prints the new ID to copy
+#                               back here.
+#   alert_language   (optional) Language for Slack alerts. Defaults to `en`.
+#   enabled          (optional) Set to false to skip in "all clients" runs.
+#                               Defaults to true.
+#   custom_thresholds(optional) Per-client overrides of SKILL.md defaults.
+# ─────────────────────────────────────────────────────────────────────────────
+
+clients:
+  - name: Harmonie Mutuelle
+    brand_name: Harmonie Mutuelle
+    airship_mcp: user-HM PROD
+    slack_channel_id: C0A8FLP8Y8K
+    slack_canvas_id: F0BCL8HPY92
+    alert_language: fr
+    enabled: true
+    # custom_thresholds:
+    #   push_sends_drop_pct: 40
+
+  # ── Example entries (disabled). Copy, fill in, set enabled: true. ───────────
+  # - name: M6
+  #   brand_name: M6 Group
+  #   airship_mcp: user-M6 PROD
+  #   slack_channel_id: C0XXXXXXXX
+  #   slack_canvas_id: F0XXXXXXXX
+  #   alert_language: fr
+  #   enabled: false
+  #
+  # - name: Burger King France
+  #   brand_name: Burger King France
+  #   airship_mcp: user-BK PROD
+  #   slack_channel_id: C0YYYYYYYY
+  #   slack_canvas_id: F0YYYYYYYY
+  #   alert_language: fr
+  #   enabled: false
+  #   custom_thresholds:
+  #     email_bounce_max: 3

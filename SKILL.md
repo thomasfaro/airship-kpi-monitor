@@ -41,6 +41,72 @@ than the internal project name — e.g. `Banque Populaire` instead of `BP PROD`,
 `Burger King France` instead of `BK PROD`, `Harmonie Mutuelle` instead of
 `HM PROD`. If omitted, falls back to `Client name`.
 
+## Run modes
+
+The skill supports two ways of supplying the inputs above:
+
+1. **Single-client run** — parameters passed directly in the prompt (the
+   classic Cloud Agent automation, or a one-off manual run). Used when the
+   prompt contains a `Client name` / `Airship MCP server` block.
+
+2. **Manual multi-client run** — parameters read from the `clients.yml`
+   registry in this repo. Used when the prompt asks to run for "all clients",
+   names one or more clients without giving their full config, or simply says
+   "run airship-kpi-monitor" with no client block. This lets a TAM trigger the
+   check for every configured client from a single Cursor chat message, with no
+   cron automation required.
+
+### Manual multi-client run — procedure
+
+When the prompt does **not** contain a full single-client parameter block,
+operate in registry mode:
+
+1. **Read the registry**: open `clients.yml` at the repo root and parse the
+   `clients:` list. If the file is missing or empty, report it and stop.
+
+2. **Select which clients to run**:
+   - "all clients" / "run airship-kpi-monitor" (no name) → every entry with
+     `enabled: true` (treat a missing `enabled` as `true`). Skip entries with
+     `enabled: false`.
+   - One or more client names given (e.g. "for Harmonie Mutuelle and M6") →
+     only the matching entries, matched case-insensitively on `name`. If a
+     named client is not found in the registry, report it and continue with the
+     others.
+
+3. **Map each registry entry to the Step 0 inputs**:
+
+   | Registry field | Skill input |
+   |---|---|
+   | `name` | `Client name` |
+   | `brand_name` (or `name` if absent) | `Brand name` |
+   | `airship_mcp` | `Airship MCP server` |
+   | `slack_channel_id` | `Slack channel ID` |
+   | `slack_canvas_id` (may be blank → first run) | `Slack canvas ID` |
+   | `alert_language` (or `en`) | Alert language |
+   | `custom_thresholds` | overrides of the Step 8 defaults |
+
+   **Precedence**: if the chat prompt also specifies a parameter directly
+   (e.g. a different channel or a threshold override), the prompt value wins
+   for that run.
+
+4. **Run the full workflow (Steps 0–11) once per selected client**, strictly
+   sequentially — finish one client (including Slack posts and canvas update)
+   before starting the next. Never interleave API calls or Slack messages
+   between clients. Always use the `Airship MCP server` from that client's
+   entry so the correct project is queried.
+
+5. **Isolate failures**: if one client errors out (MCP unavailable, scope
+   issue, etc.), log the error for that client, skip it, and continue with the
+   remaining clients. One client's failure must not abort the others.
+
+6. **First-run canvas IDs**: if a client's `slack_canvas_id` is blank, the
+   skill creates the canvas (Step 11) and prints the new ID. Tell the TAM to
+   paste each returned ID back into `clients.yml` so subsequent runs reuse it.
+
+7. **Per-client summary**: emit the Step "Output" summary block for every
+   client, then a final roll-up line:
+   `[airship-kpi-monitor] multi-run — {N} clients · {posted} posted · {skipped} skipped`.
+
 ## Data sources (traceability reference)
 
 Every figure shown in Slack or the canvas MUST be traceable to the endpoint
