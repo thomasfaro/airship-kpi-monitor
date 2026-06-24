@@ -1,8 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Airship KPI Monitor — client registry
+# Airship KPI Monitor — client registry (ROUTING ONLY — NO SECRETS)
 #
 # Central list of every client the skill is configured for. Used for MANUAL
 # multi-client runs from Cursor chat (see SKILL.md → "Manual multi-client run").
+#
+# IMPORTANT — credentials are NOT stored here.
+#   OAuth credentials (app key / client id / client secret) live ONLY in your
+#   local Cursor MCP config (~/.cursor/mcp.json), configured once per client
+#   (see MODOP.md §1.6). This file only routes the skill to an already-configured
+#   MCP server (`airship_mcp`) and a Slack channel. Safe to commit and share.
 #
 # How to launch (in Cursor chat, with the relevant MCP servers enabled):
 #   • All clients:        "Run airship-kpi-monitor for all clients in clients.yml"
@@ -14,17 +20,27 @@
 #
 # Precedence: if a parameter is also given directly in the chat prompt, the
 # prompt value wins for that run (lets you override a channel/threshold ad hoc).
-#
-# Field reference:
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Slack canvas link defaults (used to build clickable canvas URLs in alerts).
+# Override only if your Slack channels live on a different workspace.
+slack_workspace: urbanairship       # subdomain in https://<workspace>.slack.com
+slack_team_id: T025Q1VP7            # team ID segment in the canvas URL path
+
+# Field reference (per client):
 #   name             (required) Client name shown in Slack/canvas headers.
 #   brand_name       (optional) Public-facing brand for web searches in root
 #                               cause analysis. Defaults to `name`.
-#   airship_mcp      (required) Exact Cursor MCP server identifier (prefixed
-#                               with `user-` for user MCP servers).
+#   airship_mcp      (required) Exact Cursor MCP server identifier of an MCP
+#                               ALREADY configured in ~/.cursor/mcp.json
+#                               (prefixed with `user-` for user MCP servers).
 #   slack_channel_id (required) Target Slack channel ID (starts with C).
 #   slack_canvas_id  (optional) Canvas ID. Leave blank on first run — the skill
 #                               creates the canvas and prints the new ID to copy
 #                               back here.
+#   region           (optional) Airship region, `eu` or `us`. Informational
+#                               here (the real region is set on the MCP server);
+#                               also consumed by the optional MCP generator.
 #   alert_language   (optional) Language for Slack alerts. Defaults to `en`.
 #   enabled          (optional) Set to false to skip in "all clients" runs.
 #                               Defaults to true.
@@ -37,6 +53,7 @@ clients:
     airship_mcp: user-HM PROD
     slack_channel_id: C0A8FLP8Y8K
     slack_canvas_id: F0BCL8HPY92
+    region: eu
     alert_language: fr
     enabled: true
     # custom_thresholds:
@@ -48,6 +65,7 @@ clients:
   #   airship_mcp: user-M6 PROD
   #   slack_channel_id: C0XXXXXXXX
   #   slack_canvas_id: F0XXXXXXXX
+  #   region: eu
   #   alert_language: fr
   #   enabled: false
   #
@@ -56,6 +74,7 @@ clients:
   #   airship_mcp: user-BK PROD
   #   slack_channel_id: C0YYYYYYYY
   #   slack_canvas_id: F0YYYYYYYY
+  #   region: eu
   #   alert_language: fr
   #   enabled: false
   #   custom_thresholds:

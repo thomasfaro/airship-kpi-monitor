@@ -95,12 +95,27 @@ Run airship-kpi-monitor for Harmonie Mutuelle and M6.
 
 # a single client
 Run airship-kpi-monitor for Harmonie Mutuelle.
+
+# recurring in an open Cursor session (runs now, then every 24h)
+/loop 1d Run airship-kpi-monitor for all clients in clients.yml.
 ```
+
+The `/loop` mode keeps a single Cursor session running the check on an interval
+— handy for a daily sweep without any hosting. It needs Cursor to stay open and
+uses your **local** MCP servers.
 
 Requirements for a manual run:
 - The Airship MCP server for each selected client must be enabled in your
   Cursor session (the `airship_mcp` value from `clients.yml`).
 - The Slack MCP plugin must be enabled and authenticated.
+
+> **Credentials vs routing**: `clients.yml` holds **no secrets** — only routing
+> (MCP server name, Slack channel, region). OAuth credentials live solely in
+> your local `~/.cursor/mcp.json`, configured once per client (see
+> [MODOP.md](MODOP.md) §1.6). Setting up many clients at once? An optional
+> generator (`scripts/generate_mcp_config.py` + a gitignored
+> `clients.secrets.yml`) can create the `mcp.json` entries in bulk — see
+> MODOP §1.7. Skip it if your MCPs are already configured.
 
 Registry entry format (see [`clients.yml`](clients.yml) for the full reference):
 
@@ -111,6 +126,7 @@ clients:
     airship_mcp: user-HM PROD
     slack_channel_id: C0XXXXXXXX
     slack_canvas_id: F0XXXXXXXX   # blank on first run; paste the printed ID back
+    region: eu
     alert_language: fr
     enabled: true
     # custom_thresholds:
@@ -147,6 +163,8 @@ Brand name: {Public brand name for web search — e.g. "Banque Populaire" not "B
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Slack canvas ID: {F0XXXXXXXXX}
+Slack workspace: urbanairship
+Slack team ID: T025Q1VP7
 Alert language: en
 Custom thresholds (leave blank for defaults):
   push_sends_drop_pct: 40
@@ -214,10 +232,13 @@ Cloud Agent automations pick up the change on their next run.
 
 ```
 airship-kpi-monitor/
-├── SKILL.md      ← core logic (read by Cursor agents)
-├── clients.yml   ← client registry for manual multi-client runs
-├── MODOP.md      ← step-by-step setup guide for TAMs
-└── README.md     ← this file
+├── SKILL.md                     ← core logic (read by Cursor agents)
+├── clients.yml                  ← client registry (non-secret routing)
+├── clients.secrets.example.yml  ← template for the optional MCP generator
+├── scripts/
+│   └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
+├── MODOP.md                     ← step-by-step setup guide for TAMs
+└── README.md                    ← this file
 ```
 
 ---
