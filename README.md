@@ -32,6 +32,10 @@ Every figure (Slack + canvas) is **source-traceable** — each section names the
 Airship Reports endpoint it comes from, and any problem alert states the source
 endpoint and the denominator used.
 
+**Email delay alerts** include an hourly breakdown for the impacted day and
+attempt to correlate delays with large email campaigns (`responses/list` +
+`events/summary/perpush`).
+
 ---
 
 ## How it works
@@ -139,6 +143,7 @@ Minimum volumes (thresholds skipped if previous window is below these):
 | `min_push_sends` | 1000 (per OS) |
 | `min_email_sends` | 500 |
 | `min_email_delivery_day` | 100 (per day, for spam/delay alerts) |
+| `min_email_campaign_sends` | 5000 (min blast size for delay campaign correlation) |
 | `min_custom_event_count` | 200 |
 | `min_optins` | 100 (per OS) |
 | `min_timeinapp` | 1 |

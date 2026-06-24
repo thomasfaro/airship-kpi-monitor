@@ -58,6 +58,8 @@ denominator used.**
 | Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
 | Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
 | Email delay / spam complaint (daily) | `/api/reports/events` | `delay` or `spam_complaint` / `delivery` per day (`precision=DAILY`, one call per day) |
+| Email delay drill-down (on alert) | `/api/reports/events`, `/api/reports/sends` | hourly `delay` / `delivery` + `email` sends (`precision=HOURLY`, one events call per hour) |
+| Email campaigns (delay root cause) | `/api/reports/responses/list`, `/api/reports/events/summary/perpush/{push_id}`, `/api/reports/perpush/pushbody/{push_id}` | top sends on impacted day; per-push `delay`/`delivery`; `message_name` only |
 | SMS sends | `/api/reports/sends` | raw count (field `sms`) |
 | SMS delivery rate | `/api/reports/events` | `delivered` / `dispatched` SMS delivery report events |
 | SMS devices snapshot | `/api/reports/devices` | `sms.unique_devices`, `sms.opted_in`, `sms.opted_out`, `sms.uninstalled` |
@@ -190,6 +192,94 @@ Only run this step if the project sent email in the current window
 (`email_sends_current > 0` from Step 1, or `injection` > 0 in Step 2).
 If no email activity, omit email health KPIs and canvas sections.
 
+### Step 3c — Email delay drill-down (only when `email_delay_high:{date}` fires)
+
+Run this step **only** when at least one `email_delay_high:{date}` alert is in the
+**alerts to post** list (new alert — not ongoing, not resolution). For each impacted
+date `D`:
+
+#### 3c.1 — Hourly breakdown for day `D`
+
+`/api/reports/events` with `precision=HOURLY` over a date range returns **aggregates
+for the whole range**, not per-hour rows. Issue **one call per hour** (same pattern
+as Step 3b):
+
+```
+GET /api/reports/events
+  params: start={D}T{h}:00:00, end={D}T{h}:59:59, precision=HOURLY, page_size=100
+→ for h in 0..23
+```
+
+Also fetch email send volume by hour:
+
+```
+GET /api/reports/sends
+  params: start={D}T00:00:00, end={D}T23:59:59, precision=HOURLY
+→ field email per row (date = hour bucket)
+```
+
+Per hour `h`, extract from events (location=`custom`):
+`injection`, `delivery`, `delay`. Compute `delay_rate_h = delay_h / delivery_h * 100`.
+Mark hours with `delivery_h < min_email_delivery_day` as low volume (show counts but
+flag rate as non-significant).
+
+Store as `delay_hourly_breakdown[D]` — sorted table used in the Slack alert.
+
+#### 3c.2 — Correlate with email campaigns sent on day `D`
+
+List all sends that day and identify **email campaigns**:
+
+```
+GET /api/reports/responses/list
+  params: start={D}, end={D}, limit=100
+→ paginate via next_page until exhausted
+```
+
+**Email send heuristic** — treat a `responses/list` row as an email campaign when:
+- `sends >= min_email_campaign_sends`, **and**
+- `ios.sends + android.sends + web.sends == 0` (no mobile/web push volume on that row), **or**
+- `push_type` is `SEGMENTS_PUSH` / `BROADCAST` with zero platform breakdown and high `sends`
+  on a day where `/api/reports/sends` shows `email > 0`.
+
+Sort candidates by `sends` descending. Keep the **top 5** (or fewer if none qualify).
+
+For each retained campaign, fetch per-message deliverability events:
+
+```
+GET /api/reports/events/summary/perpush/{push_id}
+→ extract delay, delivery, injection counts (location=custom)
+```
+
+Compute `delay_rate_push = delay / delivery * 100` when `delivery > 0`.
+
+Extract a human-readable label — **do not pull full HTML**:
+```
+GET /api/reports/perpush/pushbody/{push_id}
+→ decode push_body (base64 JSON) → push.options.message_name
+   (fallback: push.options.campaigns.categories, else push_id)
+```
+
+Record `push_time` (UTC) from `responses/list` for hour-bucket correlation.
+
+#### 3c.3 — Correlation hypothesis
+
+Match hourly delay peaks with campaign activity:
+
+1. Identify the hour(s) with the highest `delay_h` or `delay_rate_h` (ignore low-volume
+   hours).
+2. Check whether a large campaign's `push_time` falls in the same hour or the
+   **preceding 1–2 hours** (delays often lag injection).
+3. If a top campaign has `delay_rate_push` above `email_delay_rate_max`, cite it as the
+   primary suspect.
+4. Output a `delay_campaign_correlation` string for Step 10, e.g.:
+   `"Delays concentrated at 08–09 UTC (6.2%) coincide with campaign « Newsletter Juin »
+   (push_time 07:58 UTC, 42K sends, 7.1% delay rate on that message).
+   Source: /api/reports/events HOURLY + /api/reports/responses/list +
+   events/summary/perpush."`
+
+If no campaign passes `min_email_campaign_sends`, state that delays may be
+transactional/provider-wide rather than tied to a single blast.
+
 ### Step 4 — Fetch direct responses (per OS)
 
 Use the aggregate daily response report (lighter than `responses/list`):
@@ -313,6 +403,7 @@ custom_event_drop_pct: 50       # drop > 50% → alert
 min_push_sends: 1000            # per OS — skip push thresholds if prev 7d sends < 1000
 min_email_sends: 500            # skip email thresholds if prev 7d emails < 500
 min_email_delivery_day: 100     # skip daily spam/delay check if that day's deliveries < 100
+min_email_campaign_sends: 5000  # min sends to include a campaign in delay correlation
 min_custom_event_count: 200     # skip custom event threshold if prev count < 200
 min_optins: 100                 # per OS — skip opt-in thresholds if prev 7d opt-ins < 100
 min_timeinapp: 1                # skip time-in-app threshold if prev avg < 1
@@ -523,7 +614,7 @@ Check whether the alert is mechanically explained by another metric on the
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
 | `email_spam_complaint_high:{date}` | High spam rate on {date} — check if a specific campaign sent that day had list-quality or consent issues. Cite spam_complaint / delivery from /api/reports/events (DAILY). |
-| `email_delay_high:{date}` | High delay rate on {date} — often provider throttling or reputation; correlate with injection volume that day. Cite delay / delivery from /api/reports/events (DAILY). |
+| `email_delay_high:{date}` | Run **Step 3c** first. High delay rate on {date} — correlate hourly delay peaks with large email blasts (`responses/list` + `events/summary/perpush`). Provider throttling/reputation if no large campaign matches. |
 | `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel. Check if web.unique_devices also dropped (source: /api/reports/devices). |
 | `sms_sends_drop` | Check day-by-day series for gaps (no sends on a given day = no campaign). If sms.unique_devices also dropped → audience erosion. Source: /api/reports/sends field "sms". |
 | `sms_sends_rise` | Unexpected spike — check day-by-day for concentration on a single day (bulk campaign or test blast). Source: /api/reports/sends field "sms". |
@@ -545,10 +636,10 @@ relevant metric. Identify:
 - **Trend**: if the drop is gradual across all 7 days vs concentrated in
   1–2 days, note it.
 
-#### 3. Top-campaign identification (push alerts only)
+#### 3. Top-campaign identification (push alerts and email delay alerts)
 
-Use `/api/reports/responses/list` (paginate as needed) to identify, for each
-window, the **top 3 pushes by sends**. Compare:
+**Push alerts** — use `/api/reports/responses/list` (paginate as needed) to identify,
+for each window, the **top 3 pushes by sends** (iOS/Android/web). Compare:
 
 - If a recurring large campaign (similar `group_id` or send pattern)
   is present in the previous window but absent in the current →
@@ -559,6 +650,10 @@ window, the **top 3 pushes by sends**. Compare:
 
 Limit to pushes with `sends > 100,000` to avoid noise from small
 targeted pushes.
+
+**Email delay alerts** — use the output of **Step 3c** (`delay_hourly_breakdown` +
+`delay_campaign_correlation`). Do not re-fetch; incorporate the hourly table and
+top campaigns into `possible_cause`.
 
 #### 4. External context search (best-effort)
 
@@ -597,6 +692,7 @@ possible_cause: "Short plain-language hypothesis (1–2 sentences).
 Example outputs:
 - `"App opens drop on iOS is consistent with the -38% push send reduction on iOS. No sends on Jun 17 (previous Jun 10: 671K). Source: /api/reports/opens vs /api/reports/sends + day analysis"`
 - `"Direct response rate on Android collapsed 4.1% → 0.2% (direct / push sends) while sends were normal → likely attribution/SDK tracking issue on Android. Source: /api/reports/responses ÷ /api/reports/sends"`
+- `"Email delay rate on 2026-06-23 was 6.8% (delay/delivery). Hourly peak 08–09 UTC at 9.2% aligned with campaign « Newsletter » (78K sends, push_time 07:55 UTC). Source: Step 3c hourly + responses/list + events/summary/perpush"`
 - `"No clear cause identified from available data. Recommend checking campaign calendar."`
 
 ### Step 9 — Anti-duplication check
@@ -696,6 +792,25 @@ cause line at the bottom of the message. If no cause was identified, write:
 - Email delay rate must appear as **"Delay rate (vs delivered/day)"** with the
   date, raw counts (`delay` / `delivery`), and source `/api/reports/events`
   (DAILY).
+
+  **When `email_delay_high:{date}` is a new alert**, append the Step 3c drill-down
+  **below** the `possible_cause` line (mandatory):
+
+  ```
+  **Hourly breakdown — {date}** _(source: /api/reports/events · HOURLY UTC)_
+  | Hour (UTC) | Email sends | Injection | Delivered | Delay | Delay % |
+  |---|---:|---:|---:|---:|---:|
+  | 05:00 | … | … | … | … | … % |
+  | … | (all hours 00–23; flag ⚠️ on hours where delay % > email_delay_rate_max) | | | | |
+
+  **Likely campaigns on {date}** _(source: /api/reports/responses/list · events/summary/perpush)_
+  | Send time (UTC) | Campaign | Sends | Delay | Delay % |
+  |---|---|---:|---:|---:|
+  | … | message_name | … | … | … % |
+
+  _(If no campaign ≥ min_email_campaign_sends: write "No large blast identified —
+  delays may be provider-wide or transactional.")_
+  ```
 
 - SMS sends must appear as **"SMS sends"** with the WoW delta and source
   `/api/reports/sends field "sms"`.
@@ -915,3 +1030,7 @@ After each run, print a summary to the agent log:
 - If `slack_read_canvas` fails (canvas not found or empty), treat as first run.
 - If `slack_create_canvas` is unavailable, skip canvas creation and log a
   warning — still post Slack alerts if thresholds are breached.
+- If **Step 3c** fails partially (hourly events, `responses/list`, or
+  `perpush` unavailable), still post the daily delay alert; omit the failed
+  subsection and note `"hourly/campaign drill-down unavailable: {reason}"` in
+  the Slack message.
