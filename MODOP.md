@@ -203,6 +203,7 @@ You need three pieces of information before setting up the automation:
 | **Airship MCP server name** | Name from section 1.6 — Cursor MCP list, prefixed with `user-` (e.g. `user-HM PROD`) |
 | **Slack channel ID** | Right-click the channel in Slack → **Copy link** → the ID is the last segment of the URL, starting with `C` (e.g. `C0YYYYYYYY`) |
 | **Slack canvas ID** | Leave blank — the skill creates it on the first run and returns the ID |
+| **Slack team ID** | Default `T025Q1VP7` (Urban Airship workspace) — only change if the channel lives on another Slack workspace |
 
 Optional:
 - **Custom thresholds**: any threshold from the default list you want to
@@ -255,6 +256,8 @@ Brand name: {Public brand name — e.g. "Burger King France", "Banque Populaire"
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Slack canvas ID: {F0XXXXXXXXX}
+Slack workspace: urbanairship
+Slack team ID: T025Q1VP7
 
 Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check.
 ```
@@ -307,6 +310,7 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 |---|---|---|
 | `401 / 403` errors on Airship API | Wrong OAuth scopes (need exactly `rpt` + `tpl`) or expired credentials | In Airship **Settings → OAuth**, enable only `rpt` and `tpl`; refresh Client ID/Secret in Cursor MCP settings |
 | No Slack message posted | Volume below minimums, or no anomaly | Check agent log — it prints `New alerts: 0` |
+| Canvas link in alerts returns 404 | Wrong URL format (`app.slack.com/docs/{id}` without team ID) | Use `https://urbanairship.slack.com/docs/T025Q1VP7/{canvas_id}` — see SKILL.md |
 | Canvas not found | Wrong canvas ID in prompt | Re-run manual test to get correct ID |
 | Device delta shows `n/a` | Less than 7 daily runs completed | Wait — fills automatically after 7 days |
 | Automation didn't fire | Cloud Agents quota or workspace issue | Check [cursor.com/dashboard](https://cursor.com/dashboard?tab=cloud-agents) |

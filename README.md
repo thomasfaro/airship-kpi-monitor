@@ -94,7 +94,8 @@ Brand name: {Public brand name for web search — e.g. "Banque Populaire" not "B
 Airship MCP server: {user-XX PROD}
 Slack channel ID: {C0XXXXXXXX}
 Slack canvas ID: {F0XXXXXXXXX}
-Alert language: en
+Slack workspace: urbanairship
+Slack team ID: T025Q1VP7
 Custom thresholds (leave blank for defaults):
   push_sends_drop_pct: 40
 

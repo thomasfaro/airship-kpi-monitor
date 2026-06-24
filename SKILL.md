@@ -33,6 +33,8 @@ weekly canvas with today's snapshot.
 | `Airship MCP server` | yes | `user-M6 PROD` |
 | `Slack channel ID` | yes | `C0XXXXXXXX` |
 | `Slack canvas ID` | no — created on first run | `F0XXXXXXXX` |
+| `Slack workspace` | no — defaults to `urbanairship` | `urbanairship` |
+| `Slack team ID` | no — defaults to `T025Q1VP7` | `T025Q1VP7` |
 | `Custom thresholds` | no — overrides defaults | `push_sends_drop_pct: 40` |
 
 `Brand name` is the **public-facing brand** used for web searches and news
@@ -40,6 +42,30 @@ lookups in root cause analysis (Step 8b). Use the consumer-facing name rather
 than the internal project name — e.g. `Banque Populaire` instead of `BP PROD`,
 `Burger King France` instead of `BK PROD`, `Harmonie Mutuelle` instead of
 `HM PROD`. If omitted, falls back to `Client name`.
+
+### Slack canvas link (`canvas_url`)
+
+Every alert and resolution message must link to the KPI canvas with a URL that
+**opens the canvas in Slack**. Build it at the start of each run:
+
+```
+canvas_url = https://{slack_workspace}.slack.com/docs/{slack_team_id}/{canvas_id}
+```
+
+Defaults for the Airship CS workspace: `slack_workspace=urbanairship`,
+`slack_team_id=T025Q1VP7`.
+
+**Do NOT use** `https://app.slack.com/docs/{canvas_id}` (missing team ID — link
+breaks). **Do NOT use** `?origin_team=` query params.
+
+If `slack_create_canvas` returns a `canvas_url` or `permalink` in its response,
+use that value instead (it is already correct). Otherwise construct with the
+formula above.
+
+To find `slack_team_id` for another workspace: open any canvas in Slack →
+**Copy link** → the URL is
+`https://{workspace}.slack.com/docs/{TEAM_ID}/{FILE_ID}` — extract `TEAM_ID`
+(the segment starting with `T`).
 
 ## Data sources (traceability reference)
 
@@ -710,9 +736,9 @@ from the canvas in Step 7.
 
 **Only if there are new alerts or resolutions to post.**
 
-`{canvas_url}` is the Slack canvas URL derived from the canvas ID in the
-automation prompt: `https://app.slack.com/docs/{canvas_id}` — or use the
-URL returned by `slack_create_canvas` / `slack_update_canvas`.
+`{canvas_url}` — computed at run start (see **Slack canvas link** above). Example
+for Carrefour:
+`https://urbanairship.slack.com/docs/T025Q1VP7/F0BCJHJM68H`
 
 #### New alerts message
 
@@ -876,7 +902,8 @@ Instead, follow this section-by-section workflow every run:
 
 5. **First run (no canvas ID):**
    - Call `slack_create_canvas` with the full initial content below.
-   - Return the canvas ID so the TAM can copy it into the automation prompt.
+   - Return the canvas ID **and** the full `canvas_url` so the TAM can copy both
+     into the automation prompt.
    - On the very next run, the section-by-section workflow applies.
 
 Canvas format (used for first-run creation and as section content reference):
