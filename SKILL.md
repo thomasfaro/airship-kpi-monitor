@@ -4,8 +4,8 @@ description: >-
   Daily Airship KPI monitoring with rolling 7-day window comparison, analysed
   per OS (iOS / Android). Detects significant variations in app opens, time in
   app, push sends/opt-outs, direct response rate (tracking-health signal),
-  opt-in velocity, email metrics, web push, SMS sends and delivery rate, and
-  custom events. Posts Slack alerts to a client channel and maintains a rich,
+  opt-in velocity, email metrics (including daily spam complaint and delay
+  rates), web push, SMS sends and delivery rate, and custom events. Posts Slack alerts to a client channel and maintains a rich,
   source-traceable weekly canvas. Uses the Airship Reports API via MCP and the
   Slack MCP plugin. Designed to run as a Cursor Cloud Agent automation.
 model: claude-sonnet
@@ -57,6 +57,7 @@ denominator used.**
 | Time in app (per OS) | `/api/reports/timeinapp` | avg value/day returned by Airship |
 | Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
 | Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
+| Email delay / spam complaint (daily) | `/api/reports/events` | `delay` or `spam_complaint` / `delivery` per day (`precision=DAILY`, one call per day) |
 | SMS sends | `/api/reports/sends` | raw count (field `sms`) |
 | SMS delivery rate | `/api/reports/events` | `delivered` / `dispatched` SMS delivery report events |
 | SMS devices snapshot | `/api/reports/devices` | `sms.unique_devices`, `sms.opted_in`, `sms.opted_out`, `sms.uninstalled` |
@@ -155,6 +156,40 @@ isolate events where `location = custom` AND name ∉ {`injection`, `delivery`,
 
 These are **client custom events** (app behaviour, conversions, etc.).
 
+### Step 3b — Fetch email deliverability health events (daily, per day)
+
+The `/api/reports/events` endpoint with `precision=DAILY` over a **date range**
+returns **aggregated totals for the whole range**, not per-day rows. To get
+true daily rates, issue **one call per day**.
+
+For each date `d` in the current window
+[`current_window_start` … `current_window_end`] (7 days):
+
+```
+GET /api/reports/events
+  params: start={d}, end={d}, precision=DAILY, page_size=100
+→ paginate if needed
+→ store as email_health_daily[d]
+```
+
+From each day's response, extract (location=`custom` only):
+- `delivery` → delivered count (denominator)
+- `delay` → delayed deliveries
+- `spam_complaint` → spam complaints
+
+Compute per day:
+
+```
+delay_rate_{d}          = delay_{d} / delivery_{d} * 100        (%)
+spam_complaint_rate_{d} = spam_complaint_{d} / delivery_{d} * 100  (%)
+```
+
+Skip a day if `delivery_{d} < min_email_delivery_day` (log `"skipped: low volume"`).
+
+Only run this step if the project sent email in the current window
+(`email_sends_current > 0` from Step 1, or `injection` > 0 in Step 2).
+If no email activity, omit email health KPIs and canvas sections.
+
 ### Step 4 — Fetch direct responses (per OS)
 
 Use the aggregate daily response report (lighter than `responses/list`):
@@ -217,6 +252,10 @@ Parse the canvas to extract:
    `android.*`, `web.*`, `sms.*` (if present).
 2. **Currently open alerts** — list of alert keys already posted and not yet
    resolved (format: `ALERT_KEY | os | opened_date | last_seen_date`).
+3. **Email deliverability health history** — rows from the
+   `## 📧 Email deliverability health — history` table (date, delivered, delay,
+   delay %, spam complaints, spam %). Used to avoid duplicate rows when
+   re-running the same day and to preserve history beyond the 7-day API window.
 
 If no row found for D-7, device delta metrics are **not computable** — mark
 them as `"n/a (canvas history pending)"` and do not trigger thresholds.
@@ -253,6 +292,8 @@ email_deliverability_min: 95    # rate < 95% → alert (absolute)
 email_open_rate_drop_pts: 5     # drop > 5 percentage points → alert
 email_bounce_max: 2             # rate > 2% → alert (absolute)
 email_unsubscribe_rise_pct: 30  # rise > 30% → alert
+email_spam_complaint_rate_max: 1  # daily spam_complaint / delivery > 1% → alert
+email_delay_rate_max: 5           # daily delay / delivery > 5% → alert
 
 # Web push (only evaluated if web.unique_devices > 0)
 web_sends_drop_pct: 30          # drop > 30% → alert
@@ -271,6 +312,7 @@ custom_event_drop_pct: 50       # drop > 50% → alert
 # Minimum volumes to evaluate a threshold (anti false-positive)
 min_push_sends: 1000            # per OS — skip push thresholds if prev 7d sends < 1000
 min_email_sends: 500            # skip email thresholds if prev 7d emails < 500
+min_email_delivery_day: 100     # skip daily spam/delay check if that day's deliveries < 100
 min_custom_event_count: 200     # skip custom event threshold if prev count < 200
 min_optins: 100                 # per OS — skip opt-in thresholds if prev 7d opt-ins < 100
 min_timeinapp: 1                # skip time-in-app threshold if prev avg < 1
@@ -388,6 +430,17 @@ email_bounce_rate_current    = bounce_current / injection_current * 100
 (repeat for previous window)
 ```
 
+Email deliverability health (daily, from Step 3b — per day in current window):
+
+```
+For each date d in [current_window_start, current_window_end]:
+  delay_rate_{d}          = delay_{d} / delivery_{d} * 100
+  spam_complaint_rate_{d} = spam_complaint_{d} / delivery_{d} * 100
+# Source: /api/reports/events (precision=DAILY, one call per day)
+# Denominator: delivery (same day)
+# Skip day if delivery_{d} < min_email_delivery_day
+```
+
 Devices deltas (only if D-7 canvas data available), per OS:
 
 ```
@@ -417,6 +470,8 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `email_open_rate_drop` | open_rate_drop_pts ≥ email_open_rate_drop_pts |
 | `email_bounce_high` | email_bounce_rate_current > email_bounce_max |
 | `email_unsubscribe_rise` | unsubscribe_delta_pct ≥ email_unsubscribe_rise_pct |
+| `email_spam_complaint_high:{date}` | spam_complaint_rate_{date} > email_spam_complaint_rate_max (if delivery_{date} ≥ min_email_delivery_day) |
+| `email_delay_high:{date}` | delay_rate_{date} > email_delay_rate_max (same guard) |
 | `web_sends_drop` | web_sends_delta_pct ≤ -web_sends_drop_pct (if web active) |
 | `web_sends_rise` | web_sends_delta_pct ≥ web_sends_rise_pct (if web active) |
 | `sms_sends_drop` | sms_sends_delta_pct ≤ -sms_sends_drop_pct (if SMS active) |
@@ -431,6 +486,9 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `custom_event_vanished:{name}` | event in previous, count=0 in current |
 | `custom_event_rise:{name}` | count delta ≥ custom_event_rise_pct |
 | `custom_event_drop:{name}` | count delta ≤ -custom_event_drop_pct |
+
+Dated email health keys (e.g. `email_spam_complaint_high:2026-06-23`) resolve
+when that day's rate falls back below threshold on a later run.
 
 Do **not** evaluate a threshold if the relevant previous-window volume is
 below the minimum defined in `min_*` settings (per OS where the minimum is
@@ -464,6 +522,8 @@ Check whether the alert is mechanically explained by another metric on the
 | `optins_drop_{os}` | If push_sends_{os} or app_opens_{os} also dropped → acquisition slowed alongside lower activity on {os}. Cite /api/reports/optins. |
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
+| `email_spam_complaint_high:{date}` | High spam rate on {date} — check if a specific campaign sent that day had list-quality or consent issues. Cite spam_complaint / delivery from /api/reports/events (DAILY). |
+| `email_delay_high:{date}` | High delay rate on {date} — often provider throttling or reputation; correlate with injection volume that day. Cite delay / delivery from /api/reports/events (DAILY). |
 | `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel. Check if web.unique_devices also dropped (source: /api/reports/devices). |
 | `sms_sends_drop` | Check day-by-day series for gaps (no sends on a given day = no campaign). If sms.unique_devices also dropped → audience erosion. Source: /api/reports/sends field "sms". |
 | `sms_sends_rise` | Unexpected spike — check day-by-day for concentration on a single day (bulk campaign or test blast). Source: /api/reports/sends field "sms". |
@@ -629,6 +689,14 @@ cause line at the bottom of the message. If no cause was identified, write:
 
 - Email bounce rate must appear as **"Email bounce rate (vs injection)"**.
 
+- Email spam complaint rate must appear as **"Spam complaint rate (vs delivered/day)"**
+  with the date, raw counts (`spam_complaint` / `delivery`), and source
+  `/api/reports/events` (DAILY).
+
+- Email delay rate must appear as **"Delay rate (vs delivered/day)"** with the
+  date, raw counts (`delay` / `delivery`), and source `/api/reports/events`
+  (DAILY).
+
 - SMS sends must appear as **"SMS sends"** with the WoW delta and source
   `/api/reports/sends field "sms"`.
 
@@ -675,9 +743,10 @@ Instead, follow this section-by-section workflow every run:
    |---|---|
    | `_Last run:` line | `replace` the paragraph section_id with the new date line |
    | `## 🚨 Open Alerts` | `replace` the section with the refreshed alerts table |
-   | `## 📊 This week at a glance` | `replace` each `###` subsection (App, Push, Acquisition, Email, Web push, SMS, Custom events) individually |
+   | `## 📊 This week at a glance` | `replace` each `###` subsection (App, Push, Acquisition, Email, Email deliverability health — current window, Web push, SMS, Custom events) individually |
    | `## 📱 Installed base` | `replace` the section with today's snapshot table |
    | `## 📈 Devices history` | `prepend` a new row at the top of the table — **never replace the full table** |
+   | `## 📧 Email deliverability health — history` | `prepend` new daily row(s) from Step 3b — **never replace the full table** unless trimming to 30 rows |
 
 3. **Devices History — prepend only:**
    - Identify the `section_id` of the `## 📈 Devices history` header or its table.
@@ -685,7 +754,12 @@ Instead, follow this section-by-section workflow every run:
    - This preserves all existing rows (up to 30; trim the oldest row if the
      table already has 30 rows by replacing the full section at that point only).
 
-4. **First run (no canvas ID):**
+4. **Email deliverability health history — prepend only:**
+   - Same rules as Devices History: prepend rows for each day in Step 3b not
+     already in the canvas table; update in place if the date exists.
+   - Keep last **30 rows** max (trim oldest when exceeded).
+
+5. **First run (no canvas ID):**
    - Call `slack_create_canvas` with the full initial content below.
    - Return the canvas ID so the TAM can copy it into the automation prompt.
    - On the very next run, the section-by-section workflow applies.
@@ -732,7 +806,7 @@ _(No open alerts → write "No open alerts this week.")_
 | Net opt-in (opt-ins − opt-outs) | iOS | … | … | … |
 | Net opt-in (opt-ins − opt-outs) | Android | … | … | … |
 
-### Email  _(source: /api/reports/events)_
+### Email  _(source: /api/reports/events + /api/reports/sends)_
 | KPI | Prev 7d | Last 7d | Δ |
 |---|---|---|---|
 | Sends | … | … | … |
@@ -742,6 +816,15 @@ _(No open alerts → write "No open alerts this week.")_
 | Unsubscribes (vs delivered) | … (… %) | … (… %) | … |
 
 _(Omit the Email section entirely if the client sends no email.)_
+
+### Email deliverability health — current window  _(source: /api/reports/events · DAILY)_
+| Date | Delivered | Delay | Delay % | Spam complaints | Spam % |
+|---|---|---|---|---|---|
+| 2026-06-23 | … | … | … % | … | … % |
+| … | (one row per day in the 7-day window) | | | | |
+
+_(Omit this subsection if the client sends no email.)_
+_(Flag rows where Delay % > 5% or Spam % > 1% with ⚠️ inline on the rate cells.)_
 
 ### Web push  _(source: /api/reports/sends · only if web active)_
 | KPI | Prev 7d | Last 7d | Δ |
@@ -783,6 +866,14 @@ _(Omit Web row if web.unique_devices = 0. Omit SMS row if sms.unique_devices = 0
 | 2026-06-22 | … | … | … | … | … | … | … | … | … |
 
 _(Omit Web opted-in column if web never active. Omit SMS columns if sms never active.)_
+
+## 📧 Email deliverability health — history (last 30 days)  _(source: /api/reports/events · DAILY)_
+| Date | Delivered | Delay | Delay % | Spam complaints | Spam % |
+|---|---|---|---|---|---|
+| 2026-06-23 | … | … | … % | … | … % |
+
+_(Omit this section entirely if the client sends no email.)_
+_(Keep last 30 rows. Prepend new days from Step 3b; do not duplicate a date already present — replace that row if re-running the same day.)_
 ```
 
 **Section content rules (apply when replacing each section):**
@@ -790,10 +881,12 @@ _(Omit Web opted-in column if web never active. Omit SMS columns if sms never ac
    Add / remove Web push and SMS subsections based on channel activity.
 2. Devices History — **prepend** new row only (never full replace unless trimming to 30 rows).
    Add SMS columns on first SMS-active run; Web opted-in column when web active.
-3. Installed base — replace with today's snapshot (add/remove SMS and Web rows as needed).
-4. Open Alerts — replace with updated table: add new alerts, remove resolved, update `last_seen`.
-5. Last run line — replace the paragraph with the new date and window.
-6. Keep source endpoint labels under every section header.
+3. Email deliverability health history — **prepend** daily rows from Step 3b
+   (30 rows max; replace row if date already exists).
+4. Installed base — replace with today's snapshot (add/remove SMS and Web rows as needed).
+5. Open Alerts — replace with updated table: add new alerts, remove resolved, update `last_seen`.
+6. Last run line — replace the paragraph with the new date and window.
+7. Keep source endpoint labels under every section header.
 
 **If `slack_read_canvas` fails** (canvas not found, empty, or first run):
 - Fall back to `slack_create_canvas` with the full initial content

@@ -17,7 +17,7 @@ server required). One automation per client, deployed in minutes by any TAM.
 | **Devices** | Installed base, opted-in, uninstalls (iOS, Android, Web) |
 | **Mobile push** | Sends, opt-outs, direct response rate (per OS — direct rate collapse flags a tracking/SDK issue) |
 | **Acquisition** | New opt-ins + net opt-in balance (opt-ins − opt-outs), per OS |
-| **Email** | Sends, deliverability, open rate, bounce rate, unsubscribes |
+| **Email** | Sends, deliverability, open rate, bounce rate, unsubscribes, daily spam complaint rate, daily delay rate |
 | **Web push** | Sends (if channel active) |
 | **Custom events** | New events, strong rises, strong drops, vanished events |
 
@@ -42,7 +42,7 @@ Daily cron (Cloud Agent, 07:00 UTC)
   → reads canvas for D-7 device snapshot + open alert state
   → computes deltas and evaluates thresholds
   → posts Slack alert only for NEW anomalies (anti-duplication)
-  → updates canvas: devices history + open alerts table
+  → updates canvas: devices history + email deliverability health history + open alerts table
 ```
 
 Device WoW comparison uses the **Slack canvas as persistent memory** — Cloud
@@ -123,6 +123,8 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 | `email_open_rate_drop_pts` | 5 | Open rate drop > 5 pts → alert |
 | `email_bounce_max` | 2 | Bounce rate > 2% → alert |
 | `email_unsubscribe_rise_pct` | 30 | Unsubscribes rise > 30% → alert |
+| `email_spam_complaint_rate_max` | 1 | Daily spam complaint rate > 1% of deliveries → alert |
+| `email_delay_rate_max` | 5 | Daily delay rate > 5% of deliveries → alert |
 | `web_sends_drop_pct` | 30 | Web push sends drop > 30% → alert |
 | `custom_event_rise_pct` | 50 | Custom event rise > 50% → alert |
 | `custom_event_drop_pct` | 50 | Custom event drop > 50% → alert |
@@ -136,6 +138,7 @@ Minimum volumes (thresholds skipped if previous window is below these):
 |---|---|
 | `min_push_sends` | 1000 (per OS) |
 | `min_email_sends` | 500 |
+| `min_email_delivery_day` | 100 (per day, for spam/delay alerts) |
 | `min_custom_event_count` | 200 |
 | `min_optins` | 100 (per OS) |
 | `min_timeinapp` | 1 |
