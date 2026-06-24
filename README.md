@@ -20,6 +20,7 @@ directly from Cursor chat using your local MCP servers.
 | **Acquisition** | New opt-ins + net opt-in balance (opt-ins − opt-outs), per OS |
 | **Email** | Sends, deliverability, open rate, bounce rate, unsubscribes, daily spam complaint rate, daily delay rate |
 | **Web push** | Sends (if channel active) |
+| **SMS** | Sends, delivery rate (delivered/dispatched), device base (if channel active) |
 | **Custom events** | New events, strong rises, strong drops, vanished events |
 
 App, push, engagement and acquisition KPIs are analysed **per OS (iOS /
@@ -146,7 +147,7 @@ sequentially. Your client list never leaves your machine — the repo only
 contains the skill.
 
 > **Credentials vs routing**: `clients.yml` holds **no secrets** — only routing
-> (MCP server name, Slack channel, region). OAuth credentials live solely in
+> (MCP server name, Slack channel, region, time zone). OAuth credentials live solely in
 > your local `~/.cursor/mcp.json`, configured once per client (see
 > [MODOP.md](MODOP.md) §1.5). Setting up many clients at once? An optional
 > generator (`scripts/generate_mcp_config.py` + a gitignored
@@ -168,10 +169,15 @@ clients:
     slack_channel: cs-fr-client-a      # channel name without '#'
     slack_canvas_id: F0XXXXXXXX        # leave blank on first run
     region: eu
+    time_zone: Europe/Paris            # IANA tz — local day + hourly interpretation
     enabled: true
     # custom_thresholds:
     #   push_sends_drop_pct: 40
 ```
+
+Several entries may share the **same** `slack_channel` (e.g. multiple Airship
+projects for one client) — give each its own `slack_canvas_id` (one canvas per
+project; only the alert channel is shared).
 
 On a client's **first** run, leave `slack_canvas_id` blank — the skill creates
 the canvas and prints the new ID. Paste it back into your local `clients.yml`
@@ -206,6 +212,11 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 | `email_spam_complaint_rate_max` | 1 | Daily spam complaint rate > 1% of deliveries → alert |
 | `email_delay_rate_max` | 5 | Daily delay rate > 5% of deliveries → alert |
 | `web_sends_drop_pct` | 30 | Web push sends drop > 30% → alert |
+| `web_sends_rise_pct` | 100 | Web push sends rise > 100% → alert (spike) |
+| `sms_sends_drop_pct` | 30 | SMS sends drop > 30% → alert |
+| `sms_sends_rise_pct` | 100 | SMS sends rise > 100% → alert (spike) |
+| `sms_delivery_rate_min` | 85 | SMS delivery rate < 85% → alert |
+| `sms_delivery_rate_drop_pts` | 10 | SMS delivery rate drop > 10 pts → alert |
 | `custom_event_rise_pct` | 50 | Custom event rise > 50% → alert |
 | `custom_event_drop_pct` | 50 | Custom event drop > 50% → alert |
 
@@ -223,6 +234,9 @@ Minimum volumes (thresholds skipped if previous window is below these):
 | `min_custom_event_count` | 200 |
 | `min_optins` | 100 (per OS) |
 | `min_timeinapp` | 1 |
+| `min_sms_sends` | 100 |
+| `min_sms_dispatched` | 50 |
+| `min_web_sends` | 100 |
 
 ---
 
@@ -243,8 +257,12 @@ airship-kpi-monitor/
 ├── scripts/
 │   └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
 ├── MODOP.md                     ← manual step-by-step setup guide for TAMs
+├── AGENTS.md                    ← architecture notes for coding agents
 └── README.md                    ← this file
 ```
+
+`clients.yml` is **not** in the repo — it is created locally by each TAM and is
+gitignored (it holds your client routing, never committed).
 
 ---
 

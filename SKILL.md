@@ -33,6 +33,7 @@ weekly canvas with today's snapshot.
 | `Airship MCP server` | yes | `user-CLIENT-A PROD` |
 | `Slack channel` | yes | `cs-fr-client` |
 | `Slack canvas ID` | no — created on first run | `F0XXXXXXXX` |
+| `Time zone` | no — defaults to `UTC` | `Europe/Paris` |
 | `Slack workspace` | no — defaults to `urbanairship` | `urbanairship` |
 | `Slack team ID` | no — defaults to `T025Q1VP7` | `T025Q1VP7` |
 | `Custom thresholds` | no — overrides defaults | `push_sends_drop_pct: 40` |
@@ -61,6 +62,33 @@ At the **start of each run** (before Step 0), resolve it to a channel ID for
 
 For **single-client runs** from a chat prompt, accept `Slack channel` (name, same
 format) instead of a raw `C…` ID.
+
+**Multiple projects per channel:** several `clients.yml` entries may point to the
+**same** `slack_channel` (e.g. a client monitored across several Airship
+projects, or several brands routed to one CS channel). Each entry still keeps its
+**own** `slack_canvas_id` (one canvas per project) — only the alert channel is
+shared. Run each project independently; never merge their canvases.
+
+### Time zone (`time_zone`)
+
+`clients.yml` stores an **IANA time zone** for the project (e.g. `Europe/Paris`,
+`Europe/Madrid`, `Europe/Rome`, `Africa/Casablanca`, `America/New_York`). It
+defaults to `UTC` when omitted. The Airship Reports API always returns data in
+**UTC**; `time_zone` does not change what is fetched — it changes how the agent
+**delimits the local day** and how it **labels and interprets time-based
+findings**:
+
+1. **Step 0 — local day boundary.** Compute "today / yesterday" from the current
+   time **in `time_zone`**, so the rolling windows align with the client's own
+   calendar day (matters for runs near UTC midnight).
+2. **Step 3c — hourly breakdown.** Convert each UTC hour bucket to local time and
+   show a **"Hour (local · {time_zone})"** column so a TAM reads the delay/peak
+   hours in the client's business hours, not UTC.
+3. **Step 8b — interpretation.** Phrase every time-based hypothesis in local time
+   (e.g. "delays concentrated 10:00–12:00 local"), and convert campaign
+   `push_time` (UTC from the API) to local time before correlating.
+
+Always state the time zone next to any hour you show so the value is unambiguous.
 
 ### Slack canvas link (`canvas_url`)
 
@@ -132,6 +160,7 @@ operate in registry mode:
    | `airship_mcp` | `Airship MCP server` |
    | `slack_channel` | `Slack channel` (name — resolved to ID at run start) |
    | `slack_canvas_id` (may be blank → first run) | `Slack canvas ID` |
+   | `time_zone` (IANA; defaults to `UTC`) | `Time zone` |
    | `region` (informational) | Airship region of the MCP server |
    | `custom_thresholds` | overrides of the Step 8 defaults |
 
@@ -197,8 +226,8 @@ real engagement change).
 ### Step 0 — Compute date windows
 
 ```
-today      = current UTC date
-yesterday  = today - 1 day          (last complete day)
+today      = current date in `time_zone`   (defaults to UTC if unset)
+yesterday  = today - 1 day                  (last complete local day)
 window_end = yesterday
 
 current_window_start  = yesterday - 6 days   (D-7 → D-1, 7 days)
@@ -208,7 +237,10 @@ previous_window_start = yesterday - 13 days  (D-14 → D-8, 7 days)
 previous_window_end   = yesterday - 7 days
 ```
 
-Format all dates as `YYYY-MM-DD`. Never include today (partial data).
+Format all dates as `YYYY-MM-DD`. Derive `today` from the **current time in the
+project's `time_zone`** so the last complete day matches the client's calendar
+(important when a run fires just after UTC midnight). Never include today
+(partial data).
 
 ### Step 1 — Fetch period metrics (14 days DAILY in one call each)
 
@@ -343,6 +375,11 @@ Per hour `h`, extract from events (location=`custom`):
 Mark hours with `delivery_h < min_email_delivery_day` as low volume (show counts but
 flag rate as non-significant).
 
+Convert each UTC hour bucket to the project's `time_zone` and keep both. The
+Slack/canvas table shows the **local** hour (labelled `Hour (local · {time_zone})`)
+so peaks read in business hours; keep the UTC hour available for cross-checking
+against `push_time` (also UTC) in Step 3c.3.
+
 Store as `delay_hourly_breakdown[D]` — sorted table used in the Slack alert.
 
 #### 3c.2 — Correlate with email campaigns sent on day `D`
@@ -386,16 +423,18 @@ Record `push_time` (UTC) from `responses/list` for hour-bucket correlation.
 Match hourly delay peaks with campaign activity:
 
 1. Identify the hour(s) with the highest `delay_h` or `delay_rate_h` (ignore low-volume
-   hours).
+   hours). Match campaign `push_time` against delay peaks in **UTC** (both are UTC),
+   then express the conclusion in **local time** (`time_zone`) for the TAM.
 2. Check whether a large campaign's `push_time` falls in the same hour or the
    **preceding 1–2 hours** (delays often lag injection).
 3. If a top campaign has `delay_rate_push` above `email_delay_rate_max`, cite it as the
    primary suspect.
-4. Output a `delay_campaign_correlation` string for Step 10, e.g.:
-   `"Delays concentrated at 08–09 UTC (6.2%) coincide with campaign « Newsletter Juin »
-   (push_time 07:58 UTC, 42K sends, 7.1% delay rate on that message).
-   Source: /api/reports/events HOURLY + /api/reports/responses/list +
-   events/summary/perpush."`
+4. Output a `delay_campaign_correlation` string for Step 10, with hours in local
+   time (and UTC in parentheses), e.g.:
+   `"Delays concentrated at 10–11 local (08–09 UTC, 6.2%) coincide with campaign
+   « Newsletter Juin » (push_time 09:58 local / 07:58 UTC, 42K sends, 7.1% delay
+   rate on that message). Source: /api/reports/events HOURLY +
+   /api/reports/responses/list + events/summary/perpush."`
 
 If no campaign passes `min_email_campaign_sends`, state that delays may be
 transactional/provider-wide rather than tied to a single blast.
@@ -810,7 +849,7 @@ possible_cause: "Short plain-language hypothesis (1–2 sentences).
 Example outputs:
 - `"App opens drop on iOS is consistent with the -38% push send reduction on iOS. No sends on Jun 17 (previous Jun 10: 671K). Source: /api/reports/opens vs /api/reports/sends + day analysis"`
 - `"Direct response rate on Android collapsed 4.1% → 0.2% (direct / push sends) while sends were normal → likely attribution/SDK tracking issue on Android. Source: /api/reports/responses ÷ /api/reports/sends"`
-- `"Email delay rate on 2026-06-23 was 6.8% (delay/delivery). Hourly peak 08–09 UTC at 9.2% aligned with campaign « Newsletter » (78K sends, push_time 07:55 UTC). Source: Step 3c hourly + responses/list + events/summary/perpush"`
+- `"Email delay rate on 2026-06-23 was 6.8% (delay/delivery). Hourly peak 10–11 local / 08–09 UTC at 9.2% aligned with campaign « Newsletter » (78K sends, push_time 09:55 local / 07:55 UTC). Source: Step 3c hourly + responses/list + events/summary/perpush"`
 - `"No clear cause identified from available data. Recommend checking campaign calendar."`
 
 ### Step 9 — Anti-duplication check
@@ -918,14 +957,14 @@ cause line at the bottom of the message. If no cause was identified, write:
   **below** the `possible_cause` line (mandatory):
 
   ```
-  **Hourly breakdown — {date}** _(source: /api/reports/events · HOURLY UTC)_
-  | Hour (UTC) | Email sends | Injection | Delivered | Delay | Delay % |
+  **Hourly breakdown — {date}** _(source: /api/reports/events · HOURLY; hours in local {time_zone})_
+  | Hour (local · {time_zone}) | Email sends | Injection | Delivered | Delay | Delay % |
   |---|---:|---:|---:|---:|---:|
-  | 05:00 | … | … | … | … | … % |
-  | … | (all hours 00–23; flag ⚠️ on hours where delay % > email_delay_rate_max) | | | | |
+  | 07:00 | … | … | … | … | … % |
+  | … | (all hours 00–23 local; flag ⚠️ on hours where delay % > email_delay_rate_max) | | | | |
 
   **Likely campaigns on {date}** _(source: /api/reports/responses/list · events/summary/perpush)_
-  | Send time (UTC) | Campaign | Sends | Delay | Delay % |
+  | Send time (local · {time_zone}) | Campaign | Sends | Delay | Delay % |
   |---|---|---:|---:|---:|
   | … | message_name | … | … | … % |
 

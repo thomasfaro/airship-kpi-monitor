@@ -57,8 +57,10 @@ Airship MCP server name and a Slack channel name.
 - **Credentials live ONLY in `~/.cursor/mcp.json`** (per-client OAuth, region).
   They are never stored in the repo.
 - **`clients.yml` is routing only** (MCP server name, Slack channel, canvas ID,
-  region) and is **local + gitignored** — created by each TAM, never committed.
-  Real client data is never committed; the repo ships no client registry.
+  region, `time_zone`) and is **local + gitignored** — created by each TAM, never
+  committed. Several entries may share one Slack channel (multiple projects per
+  client), each keeping its own canvas ID. Real client data is never committed;
+  the repo ships no client registry.
 - `scripts/generate_mcp_config.py` + `clients.secrets.yml` are the optional bulk
   path to populate `mcp.json`; `clients.yml`, `clients.secrets.yml`, `mcp.json`,
   and `mcp.json.bak` are all gitignored.
@@ -72,7 +74,7 @@ Cursor agents — neither can be provisioned from this VM via shell:
   Python package launched with `uv run` (the package is internal — obtain from
   the team). Requires per-client OAuth secrets with scopes exactly `rpt` + `tpl`:
   `AIRSHIP_APP_KEY`, `AIRSHIP_CLIENT_ID`, `AIRSHIP_CLIENT_SECRET`, `AIRSHIP_REGION`
-  (`us` or `eu`). See `MODOP.md` §1.5–1.6 (or §1.7 for the bulk generator).
+  (`us` or `eu`). See `MODOP.md` §1.5 (or §1.6 for the optional bulk generator).
 - **Slack MCP** (`plugin-slack-slack`) — must be authenticated/enabled in Cursor.
 
 ### Non-obvious gotchas
@@ -85,9 +87,15 @@ Cursor agents — neither can be provisioned from this VM via shell:
 - Run the generator via `uv run --with pyyaml scripts/generate_mcp_config.py`
   (inline PyYAML dep; supports `--dry-run` and `--print`). It backs up
   `mcp.json` and preserves servers it did not create.
+- The Reports API always returns **UTC**. `clients.yml` `time_zone` (IANA, e.g.
+  `Europe/Paris`) does not change what is fetched — it only sets the local-day
+  boundary (Step 0) and how hourly delay peaks / campaign times are labelled and
+  interpreted in local time (Step 3c / 8b). Defaults to UTC.
 - First run shows device WoW deltas as `n/a (canvas history pending)` until the
   canvas has 7 days of history; this is expected, not an error.
 - Smoke-test an Airship MCP connection with: `Using MCP server user-XX PROD,
-  call call_airship_api: GET /api/reports/devices` (expect `status_code: 200`).
+  call call_airship_api: GET /api/reports/opens` (expect `status_code: 200`).
+  Prefer `opens` over `devices` — `devices` can `404` on email-only projects
+  (no mobile device base), a false negative.
 - Changing default thresholds globally = edit `SKILL.md`, commit, push;
   live automations pick up the new version on their next run.

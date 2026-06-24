@@ -167,11 +167,13 @@ In Cursor chat, with the new MCP server enabled:
 
 ```
 Using MCP server user-CLIENT-A PROD, call call_airship_api:
-GET /api/reports/devices
+GET /api/reports/opens
 ```
 
-**Expected**: `status: success`, `status_code: 200`, a JSON body with
-`counts.ios`, `counts.android`, etc.
+**Expected**: `status: success`, `status_code: 200`, a JSON body with daily
+`opens` rows. Use `opens` rather than `devices` — it confirms authentication and
+the `rpt` scope on every project type (`/api/reports/devices` can return `404` on
+email-only projects with no mobile device base, a false negative).
 
 **If it fails**:
 
@@ -233,6 +235,7 @@ You need the following before running the skill for a client:
 | **Airship MCP server name** | Name from section 1.5 — prefixed with `user-` (e.g. `user-CLIENT-A PROD`) |
 | **Slack channel** | Channel name as shown in Slack, without `#` (e.g. `cs-fr-client`) — the skill resolves it to an ID at run time via the Slack MCP |
 | **Slack canvas ID** | Leave blank on first run — the skill creates it and returns the ID |
+| **Time zone** | IANA name for the project, e.g. `Europe/Paris` (defaults to `UTC`) |
 | **Slack team ID** | Default `T025Q1VP7` (Airship CS workspace) — change only if the channel lives on a different Slack workspace |
 
 Optional:
@@ -263,10 +266,19 @@ clients:
     slack_channel: cs-fr-client-a        # channel name without '#'
     slack_canvas_id: F0XXXXXXXX          # leave blank on first run
     region: eu
+    time_zone: Europe/Paris              # IANA tz — local day + hourly interpretation
     enabled: true
     # custom_thresholds:
     #   push_sends_drop_pct: 40
 ```
+
+> `time_zone` is an IANA name (`Europe/Paris`, `Europe/Madrid`, `Europe/Rome`,
+> `Africa/Casablanca`, `America/New_York`, …). The skill uses it to delimit the
+> client's local day and to label/interpret hourly delay peaks in local time.
+> Defaults to `UTC` if omitted.
+>
+> Multiple projects can share one `slack_channel` (e.g. several Airship projects
+> for the same client) — keep a distinct `slack_canvas_id` per project.
 
 > `brand_name` is the **public-facing brand** used for web searches in root
 > cause analysis — use the consumer name rather than the internal project code

@@ -42,6 +42,7 @@ Use the question tool to gather these. Collect them one client at a time.
 | OAuth client ID | `mcp.json` `AIRSHIP_CLIENT_ID` | **secret — mcp.json only** |
 | OAuth client secret | `mcp.json` `AIRSHIP_CLIENT_SECRET` | **secret — mcp.json only** |
 | Slack channel | `clients.yml` `slack_channel` | name without `#`, e.g. `cs-fr-client` |
+| Time zone | `clients.yml` `time_zone` | IANA name, e.g. `Europe/Paris`; defaults to `UTC` |
 | MCP server name | key in `mcp.json`; `clients.yml` `airship_mcp` (with `user-` prefix) | e.g. `CLIENT-A PROD` → `user-CLIENT-A PROD` |
 
 The OAuth credentials and scopes (`rpt` + `tpl`) come from the client's Airship
@@ -90,6 +91,7 @@ project — see [MODOP.md](MODOP.md) §1.4 if the user needs to create them.
     #   slack_channel: cs-fr-client-a     # channel name without '#'
     #   slack_canvas_id:                  # leave blank on first run
     #   region: eu
+    #   time_zone: Europe/Paris           # IANA tz; defaults to UTC
     #   enabled: true
     #   # custom_thresholds:
     #   #   push_sends_drop_pct: 40
@@ -148,15 +150,21 @@ Append a **non-secret** entry to `<skill dir>/clients.yml` (no credentials):
     slack_channel: <channel-name>
     slack_canvas_id:            # blank on first run
     region: <eu|us>
+    time_zone: <IANA tz, e.g. Europe/Paris>
     enabled: true
 ```
 
+Several entries may reuse the same `slack_channel` (multiple projects for one
+client) — give each its own `slack_canvas_id`.
+
 ### Step 7 — Smoke-test the connection
 
-Call the new MCP server: `GET /api/reports/devices` via `call_airship_api`.
+Call the new MCP server: `GET /api/reports/opens` via `call_airship_api`.
 
-- Expect `status_code: 200` with a JSON body containing `counts.ios` /
-  `counts.android`.
+- Expect `status_code: 200`. `opens` is the most robust check — it confirms
+  authentication and the `rpt` scope on every project type (`/api/reports/devices`
+  can return `404` on email-only projects with no mobile device base, which is a
+  false negative).
 - On `401`/`403`: the OAuth client must have exactly `rpt` + `tpl` scopes — tell
   the user to fix the scopes (MODOP §1.4) and retry.
 - On MCP red / not found: re-check the `uv` path and `airship_mcp_dir`.
@@ -194,8 +202,11 @@ Content:
 2. **Steps checklist** with done / pending status:
    prerequisites · skill installed · clients.yml created · MCP configured ·
    routing entry added · smoke test passed · first run.
-3. **Per-client status table** — columns: Client, MCP server (`user-…`), Region,
-   Smoke test (pass/fail/pending). Names and IDs only, never secrets.
+3. **Registry status table — grouped by Slack channel.** Columns: Slack channel ·
+   Projects (one row per channel; list every project + its `user-…` MCP that
+   targets that channel) · Region · Time zone · Smoke test (pass/fail/pending per
+   project). This reflects that several projects may be monitored under one
+   channel. Names and IDs only, never secrets.
 
 Re-render the canvas after each step so its status reflects reality. Omit any
 section that has no data yet rather than showing empty placeholders.
