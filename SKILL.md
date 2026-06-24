@@ -31,7 +31,7 @@ weekly canvas with today's snapshot.
 | `Client name` | yes | `M6` |
 | `Brand name` | no — defaults to Client name | `Client A Brand` |
 | `Airship MCP server` | yes | `user-CLIENT-A PROD` |
-| `Slack channel ID` | yes | `C0XXXXXXXX` |
+| `Slack channel` | yes | `cs-fr-client` |
 | `Slack canvas ID` | no — created on first run | `F0XXXXXXXX` |
 | `Slack workspace` | no — defaults to `urbanairship` | `urbanairship` |
 | `Slack team ID` | no — defaults to `T025Q1VP7` | `T025Q1VP7` |
@@ -41,6 +41,26 @@ weekly canvas with today's snapshot.
 lookups in root cause analysis (Step 8b). Use the consumer-facing name rather
 than the internal project code — e.g. the client's public brand name rather
 than their Airship project shorthand. If omitted, falls back to `Client name`.
+
+### Slack channel (`slack_channel`)
+
+`clients.yml` stores the **Slack channel name** as shown in Slack, **without**
+the leading `#` — e.g. `cs-fr-bpce`, `cs_fr_m6`.
+
+At the **start of each run** (before Step 0), resolve it to a channel ID for
+`slack_send_message`:
+
+1. Call `slack_search_channels` on the Slack MCP plugin with `query` set to the
+   configured name (`channel_types`: `public_channel,private_channel`).
+2. Pick the result whose `name` matches exactly (case-insensitive; ignore a
+   leading `#` if present).
+3. Use that channel's `id` as `channel_id` in all `slack_send_message` calls
+   for this run.
+4. If there is no exact match, stop the run for that client and report the
+   failure — do not guess or post to a partial match.
+
+For **single-client runs** from a chat prompt, accept `Slack channel` (name, same
+format) instead of a raw `C…` ID.
 
 ### Slack canvas link (`canvas_url`)
 
@@ -109,10 +129,9 @@ operate in registry mode:
    | `name` | `Client name` |
    | `brand_name` (or `name` if absent) | `Brand name` |
    | `airship_mcp` | `Airship MCP server` |
-   | `slack_channel_id` | `Slack channel ID` |
+   | `slack_channel` | `Slack channel` (name — resolved to ID at run start) |
    | `slack_canvas_id` (may be blank → first run) | `Slack canvas ID` |
    | `region` (informational) | Airship region of the MCP server |
-   | `alert_language` (or `en`) | Alert language |
    | `custom_thresholds` | overrides of the Step 8 defaults |
 
    The top-level `slack_workspace` / `slack_team_id` keys in `clients.yml`
@@ -762,11 +781,9 @@ Use `brand_name` (or `client_name` if not set) for all web searches —
 public brand name, not their Airship project shorthand).
 
 Perform web searches to find recent news that could explain the variation:
-- `"{brand_name}" application mobile {month} {year}`
-- `"{brand_name}" notification push problème {month} {year}`
-- `"{brand_name}" actualité {month} {year}` (French clients)
-- `"{brand_name}" app news {month} {year}` (English clients)
-- `"{brand_name}" incident panne {month} {year}` (if sudden drop)
+- `"{brand_name}" mobile app news {month} {year}`
+- `"{brand_name}" push notification issue {month} {year}`
+- `"{brand_name}" outage incident {month} {year}` (if sudden drop)
 
 Extract up to 2 relevant headlines or events. If nothing relevant is
 found, skip this check silently.
@@ -810,12 +827,16 @@ from the canvas in Step 7.
 
 **Only if there are new alerts or resolutions to post.**
 
+All Slack alert and resolution messages are in **English** (labels, possible-cause
+text, and footnotes).
+
 `{canvas_url}` — computed at run start (see **Slack canvas link** above). Example:
 `https://urbanairship.slack.com/docs/T025Q1VP7/F0XXXXXXXXX`
 
 #### New alerts message
 
-Use `slack_send_message` to the channel from the automation prompt.
+Use `slack_send_message` to the channel ID resolved at run start (see **Slack
+channel** above).
 **Important:** the Slack MCP requires the `message` parameter (not `text`) —
 always pass `message: "..."` or the call will silently return `no_text`
 without posting.

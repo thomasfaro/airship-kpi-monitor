@@ -41,8 +41,7 @@ Use the question tool to gather these. Collect them one client at a time.
 | App key | `mcp.json` `AIRSHIP_APP_KEY` | **secret — mcp.json only** |
 | OAuth client ID | `mcp.json` `AIRSHIP_CLIENT_ID` | **secret — mcp.json only** |
 | OAuth client secret | `mcp.json` `AIRSHIP_CLIENT_SECRET` | **secret — mcp.json only** |
-| Slack channel ID | `clients.yml` `slack_channel_id` | starts with `C` |
-| Alert language | `clients.yml` `alert_language` | defaults to `en` |
+| Slack channel | `clients.yml` `slack_channel` | name without `#`, e.g. `cs-fr-client` |
 | MCP server name | key in `mcp.json`; `clients.yml` `airship_mcp` (with `user-` prefix) | e.g. `CLIENT-A PROD` → `user-CLIENT-A PROD` |
 
 The OAuth credentials and scopes (`rpt` + `tpl`) come from the client's Airship
@@ -127,10 +126,9 @@ Append a **non-secret** entry to `<skill dir>/clients.yml` (no credentials):
   - name: <Client name>
     brand_name: <Brand name>
     airship_mcp: user-<MCP server name>
-    slack_channel_id: <C...>
+    slack_channel: <channel-name>
     slack_canvas_id:            # blank on first run
     region: <eu|us>
-    alert_language: <en|fr>
     enabled: true
 ```
 

@@ -160,10 +160,9 @@ clients:
   - name: Client A
     brand_name: Client A Brand Name
     airship_mcp: user-CLIENT-A PROD    # MCP server name from ~/.cursor/mcp.json
-    slack_channel_id: C0XXXXXXXX
+    slack_channel: cs-fr-client-a
     slack_canvas_id: F0XXXXXXXX        # leave blank on first run
     region: eu
-    alert_language: fr
     enabled: true
     # custom_thresholds:
     #   push_sends_drop_pct: 40

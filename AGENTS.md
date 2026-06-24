@@ -49,7 +49,7 @@ today's snapshot back to it.
 
 To "run in development": follow the manual-test prompt in `MODOP.md` Part 3 (or
 the multi-client / `/loop` modes in `MODOP.md` §2.2), referencing a client's
-Airship MCP server name and a Slack channel ID.
+Airship MCP server name and a Slack channel name.
 
 ### Config split — credentials vs routing (important)
 

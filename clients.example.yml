@@ -39,14 +39,15 @@ slack_team_id: T025Q1VP7            # team ID segment in the canvas URL path
 #   airship_mcp      (required) Exact Cursor MCP server identifier of an MCP
 #                               ALREADY configured in ~/.cursor/mcp.json
 #                               (prefixed with `user-` for user MCP servers).
-#   slack_channel_id (required) Target Slack channel ID (starts with C).
+#   slack_channel    (required) Slack channel name (without `#`), e.g. cs-fr-client.
+#                               Resolved to a channel ID via slack_search_channels
+#                               at run start.
 #   slack_canvas_id  (optional) Canvas ID. Leave blank on first run — the skill
 #                               creates the canvas and prints the new ID to copy
 #                               back here.
 #   region           (optional) Airship region, `eu` or `us`. Informational
 #                               here (the real region is set on the MCP server);
 #                               also consumed by the optional MCP generator.
-#   alert_language   (optional) Language for Slack alerts. Defaults to `en`.
 #   enabled          (optional) Set to false to skip in "all clients" runs.
 #                               Defaults to true.
 #   custom_thresholds(optional) Per-client overrides of SKILL.md defaults.
@@ -57,10 +58,9 @@ clients:
   # - name: Client A
   #   brand_name: Client A Brand Name
   #   airship_mcp: user-CLIENT-A PROD
-  #   slack_channel_id: C0XXXXXXXX
+  #   slack_channel: cs-fr-client-a
   #   slack_canvas_id: F0XXXXXXXX    # leave blank on first run
   #   region: eu
-  #   alert_language: fr
   #   enabled: true
   #   # custom_thresholds:
   #   #   push_sends_drop_pct: 40
@@ -68,10 +68,9 @@ clients:
   # - name: Client B
   #   brand_name: Client B Brand Name
   #   airship_mcp: user-CLIENT-B PROD
-  #   slack_channel_id: C0YYYYYYYY
+  #   slack_channel: cs-fr-client-b
   #   slack_canvas_id: F0YYYYYYYY
   #   region: eu
-  #   alert_language: fr
   #   enabled: false
   #   custom_thresholds:
   #     email_bounce_max: 3

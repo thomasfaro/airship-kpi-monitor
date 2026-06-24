@@ -231,7 +231,7 @@ You need the following before running the skill for a client:
 | Info | How to get it |
 |---|---|
 | **Airship MCP server name** | Name from section 1.5 — prefixed with `user-` (e.g. `user-CLIENT-A PROD`) |
-| **Slack channel ID** | Right-click the channel in Slack → **Copy link** → the ID is the last segment of the URL, starting with `C` (e.g. `C0YYYYYYYY`) |
+| **Slack channel** | Channel name as shown in Slack, without `#` (e.g. `cs-fr-client`) — the skill resolves it to an ID at run time via the Slack MCP |
 | **Slack canvas ID** | Leave blank on first run — the skill creates it and returns the ID |
 | **Slack team ID** | Default `T025Q1VP7` (Airship CS workspace) — change only if the channel lives on a different Slack workspace |
 
@@ -260,10 +260,9 @@ clients:
   - name: Client A
     brand_name: Client A Public Brand Name
     airship_mcp: user-CLIENT-A PROD      # the MCP server name from 1.5
-    slack_channel_id: C0XXXXXXXX
+    slack_channel: cs-fr-client-a
     slack_canvas_id: F0XXXXXXXX          # leave blank on first run
     region: eu
-    alert_language: fr
     enabled: true
     # custom_thresholds:
     #   push_sends_drop_pct: 40
@@ -307,7 +306,7 @@ Before running regularly, validate the skill works for this client.
 Run airship-kpi-monitor for client {Client name}.
 Brand name: {Client's public brand name}
 Airship MCP server: {user-CLIENT-A PROD}
-Slack channel ID: {C0XXXXXXXX}
+Slack channel: {cs-fr-client}
 
 Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check
 using rolling 7-day windows.
