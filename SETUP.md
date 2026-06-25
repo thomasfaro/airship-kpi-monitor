@@ -14,8 +14,10 @@
 - One **Airship MCP server per client** in `~/.cursor/mcp.json` (holds the OAuth
   credentials — local only).
 - The teammate's local **`clients.yml`** registry (non-secret routing).
-- A **setup-tracker canvas** that visualises progress and the local file
-  locations (no secrets).
+- A local **monitoring canvas** (`airship-kpi-monitor.canvas.tsx`) that during
+  setup shows progress and local file locations, and after the first run becomes
+  the run dashboard (open alerts, last-run times, links to each Slack KPI
+  canvas). No secrets.
 
 ## Hard rules (read before doing anything)
 
@@ -98,10 +100,11 @@ project — see [MODOP.md](MODOP.md) §1.4 if the user needs to create them.
   ```
 - If it already exists, keep it and append to it later (Step 5).
 
-### Step 3 — Render the setup-tracker canvas
+### Step 3 — Render the monitoring canvas
 
-Build the tracker canvas now (see **Setup-tracker canvas** below) so the user can
-watch progress. Update it after each subsequent step.
+Build the canvas now (see **Monitoring canvas** below) so the user can watch
+progress. Update it after each subsequent step. The same file is later rewritten
+by the skill (SKILL.md Step 12) to become the run dashboard.
 
 ### Step 4 — Collect one client's inputs
 
@@ -183,18 +186,19 @@ the next client (if any).
 - Point to **run modes** (one-off / subset / `/loop`) in
   [README.md](README.md) and [MODOP.md](MODOP.md) §2.3.
 
-## Setup-tracker canvas
+## Monitoring canvas
 
-Render a single canvas to visualise the setup. **Before writing it**, read
+Render a single canvas to visualise the setup; the skill later reuses the same
+file as the run dashboard (SKILL.md Step 12). **Before writing it**, read
 `~/.cursor/skills-cursor/canvas/SKILL.md` and the SDK declarations in
 `~/.cursor/skills-cursor/canvas/sdk/` for the exact components and theme tokens.
 
 - **Location** (generated locally, per user — never committed):
-  `~/.cursor/projects/<workspace>/canvases/airship-kpi-setup.canvas.tsx`.
+  `~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`.
 - **Never render secrets.** App keys, client IDs, and client secrets must not
   appear anywhere in the canvas.
 
-Content:
+Setup-phase content (before the first run):
 
 1. **Local file locations** panel — the two paths the user fills/owns:
    - `~/.cursor/mcp.json`
@@ -210,3 +214,7 @@ Content:
 
 Re-render the canvas after each step so its status reflects reality. Omit any
 section that has no data yet rather than showing empty placeholders.
+
+After the first KPI run, the skill rewrites this file as the **run dashboard**
+(open alerts, per-project last-run times, links to each Slack KPI canvas) with
+the setup details kept in a collapsed section. See SKILL.md Step 12.

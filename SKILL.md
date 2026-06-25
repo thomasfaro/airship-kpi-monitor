@@ -190,6 +190,9 @@ operate in registry mode:
    client, then a final roll-up line:
    `[airship-kpi-monitor] multi-run — {N} clients · {posted} posted · {skipped} skipped`.
 
+8. **Update the local monitoring canvas** once at the end (Step 12), rolling up
+   every processed client's open alerts, last-run time, and Slack canvas link.
+
 ## Data sources (traceability reference)
 
 Every figure shown in Slack or the canvas MUST be traceable to the endpoint
@@ -226,7 +229,8 @@ real engagement change).
 ### Step 0 — Compute date windows
 
 ```
-today      = current date in `time_zone`   (defaults to UTC if unset)
+today         = current date in `time_zone`   (defaults to UTC if unset)
+run_timestamp = current date-time in `time_zone`, formatted `YYYY-MM-DD · HH:MM <tz abbr>`
 yesterday  = today - 1 day                  (last complete local day)
 window_end = yesterday
 
@@ -240,7 +244,9 @@ previous_window_end   = yesterday - 7 days
 Format all dates as `YYYY-MM-DD`. Derive `today` from the **current time in the
 project's `time_zone`** so the last complete day matches the client's calendar
 (important when a run fires just after UTC midnight). Never include today
-(partial data).
+(partial data). Capture `run_timestamp` once at run start — it records the
+**time** the run executed (not just the date) and is surfaced in the Output
+summary and the local monitoring canvas (Step 12).
 
 ### Step 1 — Fetch period metrics (14 days DAILY in one call each)
 
@@ -1169,17 +1175,55 @@ _(Keep last 30 rows. Prepend new days from Step 3b; do not duplicate a date alre
 - Return the canvas ID **and** the full `canvas_url` so the TAM can copy both
   into the automation prompt (or `clients.yml`)
 
+### Step 12 — Update the local monitoring canvas (optional, local-only)
+
+After finishing the run — in a **multi-client run, once all selected clients
+have been processed**; in a single-client run, after that client — rewrite the
+local Cursor canvas so the TAM has a roll-up dashboard of the latest run beside
+the chat. This canvas is **local-only, gitignored, and never contains secrets**.
+It is a convenience snapshot, not the source of truth: the per-project Slack KPI
+canvases (Step 11) remain the live, shareable record. A canvas cannot fetch, so
+the data is embedded inline and only reflects this run.
+
+1. **Before writing**, read `~/.cursor/skills-cursor/canvas/SKILL.md` and the SDK
+   declarations in `~/.cursor/skills-cursor/canvas/sdk/` for the exact components
+   and theme tokens.
+2. **Location**: `~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`
+   (overwrite in place; this single file serves both the run dashboard and the
+   setup view).
+3. **Content** (run dashboard on top, setup section collapsed at the bottom):
+   - **Header** with the global `run_timestamp` (date **and** time) and the run
+     window.
+   - **Summary stats**: projects monitored, projects in alert, total open
+     alerts, resolutions today, Slack channels.
+   - **Open alerts table** (the primary content): one row per open alert across
+     all projects — project · severity · `alert key` · scope (OS/Email/SMS/Web)
+     · opened · possible cause. Sort by severity.
+   - **Per-project status table**: project · Slack channel · last run (use
+     `run_timestamp` for clients processed this run) · open-alert count · a
+     `Link` to that project's Slack KPI canvas
+     (`canvas_url = https://{slack_workspace}.slack.com/docs/{slack_team_id}/{slack_canvas_id}`).
+   - **Setup section** (collapsed): local file locations
+     (`~/.cursor/mcp.json`, `clients.yml`) and the install checklist.
+4. **Never embed secrets** (app keys, client IDs, client secrets). Use only
+   names, channels, and canvas IDs from `clients.yml`.
+5. If the canvas tooling is unavailable, skip this step and log a warning — it
+   never blocks the Slack alerts or per-project canvases.
+
 ## Output
 
 After each run, print a summary to the agent log:
 
 ```
-[airship-kpi-monitor] {Client name} — run {today}
+[airship-kpi-monitor] {Client name} — run {run_timestamp}
   Windows: {current_window_start}→{current_window_end} vs {previous_window_start}→{previous_window_end}
   New alerts: {count} | Resolutions: {count} | Ongoing: {count}
   Canvas updated: {canvas_id}
   Slack message posted: {yes/no}
 ```
+
+After a multi-client run, the local monitoring canvas (Step 12) is rewritten
+once with the roll-up of all processed clients.
 
 ## Error handling
 

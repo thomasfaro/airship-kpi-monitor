@@ -73,7 +73,9 @@ The agent reads [SETUP.md](SETUP.md) and walks you through it interactively: it
 checks prerequisites, asks you for each client's OAuth credentials and Slack
 channel, writes the Airship MCP server into your local `~/.cursor/mcp.json`
 (backed up first), creates your local `clients.yml`, smoke-tests the connection,
-and shows a setup-tracker canvas with the local file locations and progress.
+and shows a local monitoring canvas with the file locations and progress (the
+skill later reuses it as a run dashboard with open alerts and links to each
+Slack KPI canvas).
 
 Credentials are written only to your local `~/.cursor/mcp.json` — never to the
 repo, `clients.yml`, or the canvas.

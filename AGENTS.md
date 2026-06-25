@@ -13,10 +13,12 @@ plus a client registry:
   "install/setup this skill", read it and perform the steps: clone the skill,
   collect each client's inputs via the question tool, edit `~/.cursor/mcp.json`
   (creds — backed up first), create the local `clients.yml`, and smoke-test. It
-  also specs a **local-only, secret-free setup-tracker canvas**
-  (`~/.cursor/projects/<workspace>/canvases/airship-kpi-setup.canvas.tsx`, never
-  committed). Credentials are never written to the repo, `clients.yml`, or the
-  canvas.
+  also specs a **local-only, secret-free monitoring canvas**
+ (`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`, never
+ committed). It tracks setup progress, then the skill rewrites it as a run
+ dashboard (open alerts, last-run times, links to each Slack KPI canvas) on each
+ run (SKILL.md Step 12). Credentials are never written to the repo, `clients.yml`,
+ or the canvas.
 - `MODOP.md` — manual step-by-step setup guide for TAMs (fallback for SETUP.md).
 - `README.md` — product overview.
 - `clients.yml` — **non-secret** client registry. It is **local + gitignored**:
