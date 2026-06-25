@@ -24,9 +24,16 @@ set of Markdown files plus a client registry:
  committed). It tracks setup progress, then the skill rewrites it as a run
  dashboard (open alerts, last-run times, links to each Slack KPI canvas) on each
  run (SKILL.md Step 12). Credentials are never written to the repo, `clients.yml`,
- or the canvas.
+ the canvas, or the HTML dashboard.
 - `MODOP.md` — manual step-by-step setup guide for TAMs (fallback for SETUP.md).
 - `README.md` — product overview.
+- `.cursor/skills/airship-kpi-monitor/dashboard/` — a **local HTML dashboard**
+  openable in any browser with no server (`index.html`). The **app**
+  (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`) is
+  **committed and data-free**; the real data is `dashboard-data.js`, a **local +
+  gitignored** file the skill rewrites each run (SKILL.md Step 13). Browsers can't
+  `fetch()` over `file://`, so data is loaded as a `<script>` that sets
+  `window.AIRSHIP_KPI_DATA`. No secrets ever live here.
 - `.cursor/skills/airship-kpi-monitor/clients.yml` — **non-secret** client
   registry. It is **local + gitignored**: the repo never ships or commits it. Each
   TAM creates their own (template lives in `MODOP.md` §2.2 / `SETUP.md`) and fills
@@ -109,6 +116,13 @@ Cursor agents — neither can be provisioned from this VM via shell:
   edits to `SKILL.md` there are versioned with the repo. The `.cursor/hooks/`
   auto-update hook (`git pull --ff-only` on session start) is fail-open and never
   touches the gitignored `clients.yml`.
+- The HTML dashboard app is committed but its data file
+  (`dashboard/dashboard-data.js`) is gitignored — a run writes **only** that data
+  file (Step 13), never the committed app. It is fail-open (skips on missing
+  folder / write error) and shares the canvas's Slack **deep links**
+  (`slack://file?team=…&id=…` for canvases, `…/app_redirect?channel=…` for
+  channels) so clicks open the Slack app instead of spawning browser redirect
+  tabs.
 - Changing default thresholds globally = edit
   `.cursor/skills/airship-kpi-monitor/SKILL.md`, commit, push; teammates pick up
   the new version on their next pull (the hook pulls automatically), applied on

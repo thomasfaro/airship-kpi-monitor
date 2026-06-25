@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Airship KPI Monitor — Dashboard</title>
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%B0%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!--
+      Local, no-server KPI dashboard for the airship-kpi-monitor skill.
+
+      How it works (read .cursor/skills/airship-kpi-monitor/SKILL.md Step 13):
+      - This app (index.html / styles.css / app.js) is COMMITTED and contains NO
+        client data. Everyone who clones the repo gets it.
+      - The real data lives in `dashboard-data.js`, a LOCAL, gitignored file the
+        skill rewrites at the end of each run. Browsers block fetch() over
+        file://, so data is loaded as a <script> that sets window.AIRSHIP_KPI_DATA.
+      - `dashboard-data.sample.js` is committed sample data so the page renders
+        before the first run. If `dashboard-data.js` is present it overrides it.
+      - NEVER put secrets (app keys, client IDs, secrets) in any of these files.
+
+      To view: double-click index.html, or run
+        open .cursor/skills/airship-kpi-monitor/dashboard/index.html
+    -->
+    <div id="app"></div>
+
+    <!-- Sample data first; the real local file (if present) overrides it. -->
+    <script src="dashboard-data.sample.js"></script>
+    <script src="dashboard-data.js" onerror="window.__KPI_DATA_FILE_MISSING=true"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

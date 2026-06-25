@@ -22,6 +22,10 @@ only about credentials and routing:
   setup shows progress and local file locations, and after the first run becomes
   the run dashboard (open alerts, last-run times, links to each Slack KPI
   canvas). No secrets.
+- A local **HTML dashboard** (`.cursor/skills/airship-kpi-monitor/dashboard/`)
+  the user can open in any browser with no server. The app is committed (no
+  data); the skill writes its local, gitignored data file (`dashboard-data.js`)
+  on each run (SKILL.md Step 13). No secrets.
 
 ## Hard rules (read before doing anything)
 
@@ -190,6 +194,9 @@ the next client (if any).
 - Offer a first run: `Run airship-kpi-monitor for <Client name>.`
 - Remind the user that the **first run returns a canvas ID** — paste it into the
   client's `slack_canvas_id` in `clients.yml` so later runs reuse the same canvas.
+- Surface the **local HTML dashboard** and offer to open it after the first run:
+  `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`. Note it shows
+  labelled sample data until a run writes the local `dashboard-data.js`.
 - Point to **run modes** (one-off / subset / `/loop`) in
   [README.md](README.md) and [MODOP.md](MODOP.md) §2.3.
 
@@ -225,3 +232,8 @@ section that has no data yet rather than showing empty placeholders.
 After the first KPI run, the skill rewrites this file as the **run dashboard**
 (open alerts, per-project last-run times, links to each Slack KPI canvas) with
 the setup details kept in a collapsed section. See SKILL.md Step 12.
+
+The same run also writes the **HTML dashboard** data file
+(`.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js`, SKILL.md
+Step 13) — same rules: local-only, gitignored, never any secrets. The committed
+dashboard app is never edited by a run.

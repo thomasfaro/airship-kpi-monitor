@@ -317,6 +317,27 @@ from Cursor chat with the relevant MCP servers enabled:
   immediately, then every 24h. Requires Cursor to stay open; uses your local
   MCP servers (no hosting needed).
 
+### 2.4 Local roll-up views (canvas + HTML dashboard)
+
+Beyond the per-project Slack KPI canvases (the live, shareable source of truth),
+each run refreshes two **local, gitignored, secret-free** roll-up views so you
+can scan all your clients at a glance:
+
+- **Cursor canvas** —
+  `~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
+  rendered beside the chat (SKILL.md Step 12).
+- **HTML dashboard** — a designed page you can open in **any browser, no server,
+  without Cursor** (handy on a teammate's machine):
+
+  ```bash
+  open .cursor/skills/airship-kpi-monitor/dashboard/index.html
+  ```
+
+  The app (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`) ships
+  with the repo and holds **no client data**; your real data lives in the local,
+  gitignored `dashboard-data.js` that the skill writes each run (SKILL.md
+  Step 13). Until your first run writes it, the page shows labelled sample data.
+
 ---
 
 ## Part 3 — First run (5 min)
@@ -343,6 +364,9 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
   everything is within thresholds)
 - [ ] The canvas is created — the agent prints `Canvas ID: F0XXXXXXXXX`
 - [ ] Copy the canvas ID and paste it into your local `clients.yml` entry
+- [ ] Open the local HTML dashboard and confirm the client appears with real
+  data (no longer the sample banner):
+  `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`
 
 > **First run note**: Device delta metrics will show `n/a (canvas history
 > pending)` because the D-7 snapshot does not exist yet. This is expected.
@@ -375,6 +399,7 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 | Canvas link in alerts is broken | URL missing team ID in path | Build URL as `https://{workspace}.slack.com/docs/{team_id}/{canvas_id}` — see SKILL.md |
 | Canvas not found | Wrong canvas ID in `clients.yml` | Re-run Part 3 to get the correct ID |
 | Device delta shows `n/a` | Less than 7 daily runs completed | Expected — fills automatically after 7 days |
+| HTML dashboard shows "sample data" / is empty | No run has written the local `dashboard-data.js` yet | Run the skill once; it writes `.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js` (gitignored) |
 
 ---
 

@@ -141,6 +141,29 @@ local MCP servers.
 
 ---
 
+## Local views — Cursor canvas + HTML dashboard
+
+Each run refreshes two **local, gitignored, secret-free** roll-up views (in
+addition to the per-project Slack KPI canvases, which remain the live, shareable
+source of truth):
+
+- **Cursor canvas** — `~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
+  rendered beside the chat (SKILL.md Step 12).
+- **HTML dashboard** — a richly-designed page you can open in **any browser, with
+  no server and without Cursor** — handy for viewing on a teammate's machine:
+
+  ```bash
+  open .cursor/skills/airship-kpi-monitor/dashboard/index.html
+  ```
+
+  The dashboard **app** (`index.html`, `styles.css`, `app.js`,
+  `dashboard-data.sample.js`) is **committed** and contains **no client data** —
+  everyone gets it on clone. The real data lives in `dashboard-data.js`, a
+  **local, gitignored** file the skill rewrites each run (SKILL.md Step 13).
+  Until the first run writes it, the page shows clearly-labelled sample data.
+
+---
+
 ## Client registry — local `clients.yml`
 
 `clients.yml` is **local and gitignored** — the repo never ships or commits it.
@@ -214,7 +237,7 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 | `email_bounce_max` | 2 | Bounce rate > 2% → alert |
 | `email_unsubscribe_rise_pct` | 30 | Unsubscribes rise > 30% → alert |
 | `email_spam_complaint_rate_max` | 1 | Daily spam complaint rate > 1% of deliveries → alert |
-| `email_delay_rate_max` | 5 | Daily delay rate > 5% of deliveries → alert |
+| `email_delay_rate_max` | 10 | Daily delay rate > 10% of deliveries → alert |
 | `web_sends_drop_pct` | 30 | Web push sends drop > 30% → alert |
 | `web_sends_rise_pct` | 100 | Web push sends rise > 100% → alert (spike) |
 | `sms_sends_drop_pct` | 30 | SMS sends drop > 30% → alert |
@@ -264,6 +287,11 @@ airship-kpi-monitor/
 │       └── airship-kpi-monitor/
 │           ├── SKILL.md                 ← core logic (read by Cursor agents)
 │           ├── clients.secrets.example.yml  ← template for the optional MCP generator
+│           ├── dashboard/               ← local HTML dashboard (committed app, no data)
+│           │   ├── index.html           ← open in any browser (no server)
+│           │   ├── styles.css
+│           │   ├── app.js
+│           │   └── dashboard-data.sample.js  ← sample data; real dashboard-data.js is local/gitignored
 │           └── scripts/
 │               └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
 ├── SETUP.md                     ← agent-guided installer playbook

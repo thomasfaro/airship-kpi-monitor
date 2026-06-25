@@ -187,7 +187,12 @@ operate in registry mode:
 
 5. **Isolate failures**: if one client errors out (MCP unavailable, scope
    issue, etc.), log the error for that client, skip it, and continue with the
-   remaining clients. One client's failure must not abort the others.
+   remaining clients. One client's failure must not abort the others. First
+   apply the **transient-error retry policy** (see *Error handling*) — a
+   `401 Expired token` / `40101` is usually a stale cached token that refreshes
+   on retry, so do not skip a client on the first auth error. Only skip after
+   retries are exhausted, and list skipped clients in the final roll-up so they
+   can be re-run.
 
 6. **First-run canvas IDs**: if a client's `slack_canvas_id` is blank, the
    skill creates the canvas (Step 11) and prints the new ID. Tell the TAM to
@@ -197,8 +202,9 @@ operate in registry mode:
    client, then a final roll-up line:
    `[airship-kpi-monitor] multi-run — {N} clients · {posted} posted · {skipped} skipped`.
 
-8. **Update the local monitoring canvas** once at the end (Step 12), rolling up
-   every processed client's open alerts, last-run time, and Slack canvas link.
+8. **Update the local views** once at the end: rewrite the Cursor canvas
+   (Step 12) and the local HTML dashboard data file (Step 13), rolling up every
+   processed client's open alerts, last-run time, and Slack canvas link.
 
 ## Data sources (traceability reference)
 
@@ -258,7 +264,11 @@ summary and the local monitoring canvas (Step 12).
 ### Step 1 — Fetch period metrics (14 days DAILY in one call each)
 
 Call via MCP `call_airship_api` on the **Airship MCP server** specified in the
-automation prompt.
+automation prompt. Every call here (and in all later steps) is subject to the
+**transient-error retry policy** in *Error handling* — retry `401 Expired
+token` / `40101`, `429`, and `5xx` with back-off before treating them as fatal.
+Make one cheap probe call first (a single-day `opens`) and let it refresh the
+token before issuing the full set of Step 1 calls.
 
 ```
 GET /api/reports/sends
@@ -555,7 +565,7 @@ email_open_rate_drop_pts: 5     # drop > 5 percentage points → alert
 email_bounce_max: 2             # rate > 2% → alert (absolute)
 email_unsubscribe_rise_pct: 30  # rise > 30% → alert
 email_spam_complaint_rate_max: 1  # daily spam_complaint / delivery > 1% → alert
-email_delay_rate_max: 5           # daily delay / delivery > 5% → alert
+email_delay_rate_max: 10          # daily delay / delivery > 10% → alert
 
 # Web push (only evaluated if web.unique_devices > 0)
 web_sends_drop_pct: 30          # drop > 30% → alert
@@ -1227,6 +1237,77 @@ the data is embedded inline and only reflects this run.
 7. If the canvas tooling is unavailable, skip this step and log a warning — it
    never blocks the Slack alerts or per-project canvases.
 
+### Step 13 — Update the local HTML dashboard (optional, local-only)
+
+In addition to the Cursor canvas (Step 12), refresh the **browser dashboard**:
+a richly-designed, dependency-free local web page a TAM can open in any browser
+(double-click `index.html`) **without Cursor and without any server** — useful
+for sharing the view on a teammate's machine. Run it at the **same time as Step
+12** (once at the end of a multi-client run; after the client in a single-client
+run).
+
+The dashboard **app** is committed in the repo and contains **no data**:
+`.cursor/skills/airship-kpi-monitor/dashboard/{index.html,styles.css,app.js,dashboard-data.sample.js}`.
+**Never edit those committed files in a run.** A run writes **only** the data
+file:
+
+- **Write to**: `.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js`
+  (this path is **gitignored** — local only). Browsers cannot `fetch()` over
+  `file://`, so the data is a JS file that assigns a global which `index.html`
+  loads via a `<script>` tag.
+
+1. **Read-merge-write history.** Before writing, read the existing
+   `dashboard-data.js` if present and reuse its `history` array (and each
+   project's `alertHistory`). Append this run's point, keep the **last ~14**
+   entries, then rewrite the whole file. If the old file is missing or
+   unparseable, start fresh (fail-open).
+
+2. **File shape** (exact global; values from this run and `clients.yml` —
+   **no secrets**):
+
+   ```js
+   window.AIRSHIP_KPI_DATA = {
+     generatedAt: "<run_timestamp>",            // date AND time, e.g. "2026-06-24 · 20:23 CEST"
+     window: "<curr_start> → <curr_end> vs <prev_start> → <prev_end>",
+     slackWorkspace: "<slack_workspace>",       // for channel/canvas deep links
+     slackTeamId: "<slack_team_id>",
+     priority: "<1–2 sentence priority focus, or omit>",
+     stats: { clients, projects, projectsInAlert, openAlerts, resolutions },
+     history: [ { ts: "<date>", openAlerts: <n>, projectsInAlert: <n> }, … ], // newest last, ≤14
+     clients: [
+       { name: "<client>", projects: [
+         { name: "<project>", channel: "<slack_channel>", canvasId: "<slack_canvas_id>",
+           lastRun: "<run_timestamp>", alerts: { count: <n>, worstSeverity: "danger|warning|info|null" },
+           trend: <"string" | ["bullet", "bullet", …]>, alertHistory: [ <n>, … ] }  // newest last
+       ] }
+     ],
+     setup: {
+       files: [ { label, path, note } ],          // ~/.cursor/mcp.json + clients.yml (paths only)
+       checklist: [ { content, done } ]
+     }
+   };
+   ```
+
+   - Group `clients` by client (a client can own several projects), mirroring
+     Step 12. `worstSeverity` is the most severe open alert on that project
+     (`danger` > `warning` > `info`; `null` when none).
+   - **`trend` format:** for projects in **watch or alert** (`worstSeverity`
+     `warning` or `danger`), write `trend` as an **array of short bullet
+     strings** — one driver per line (e.g. each impacted metric, the cause, the
+     expected resolution). The dashboard renders an array as a bullet list. For
+     **stable** projects (no open alert) use a single plain **string** (e.g.
+     `"Stable — no significant variations"`). Keep each bullet concise.
+   - Do **not** set `isSample`. Omit fields you cannot compute rather than
+     inventing values.
+
+3. **No secrets, English only.** Use only names, channels, and canvas IDs from
+   `clients.yml`. Never write app keys, client IDs, or client secrets. All
+   strings (trends, priority) in English.
+
+4. **Fail-open.** If the dashboard folder is missing or the write fails, skip
+   this step and log a warning — it never blocks Slack alerts, per-project
+   canvases, or Step 12.
+
 ## Output
 
 After each run, print a summary to the agent log:
@@ -1239,13 +1320,50 @@ After each run, print a summary to the agent log:
   Slack message posted: {yes/no}
 ```
 
-After a multi-client run, the local monitoring canvas (Step 12) is rewritten
-once with the roll-up of all processed clients.
+After a multi-client run, the local monitoring canvas (Step 12) and the local
+HTML dashboard data file (Step 13) are both rewritten once with the roll-up of
+all processed clients.
 
 ## Error handling
 
-- If an API call returns 401/403, log `"scope unavailable: {endpoint}"` and
-  skip the related KPIs (do not alert on missing data).
+### Transient-error retry policy (apply to every `call_airship_api` call)
+
+The Airship MCP server can return **transient failures** — most commonly a
+`401` with `error_code: 40101` / `"Unauthorized: Expired token"` (or
+`authentication_failed` / `"API credentials are invalid or expired"`) when its
+cached OAuth token has lapsed but not yet refreshed. These are **not** a real
+credential problem: the next call usually triggers a token refresh and
+succeeds. Network blips and `429` / `5xx` responses are transient too.
+
+Before treating any failure as fatal, **retry the same call** with this policy:
+
+1. **Retry up to 3 times** (4 attempts total) on a transient failure:
+   - `401` with `error_code: 40101`, message containing `Expired token`, or
+     `authentication_failed` / `credentials are invalid or expired`;
+   - `429` (rate limited);
+   - `5xx` (server error) or a network/timeout error.
+2. **Back off between attempts**: wait ~2s, then ~5s, then ~10s. (A token
+   refresh often lands within the first retry.)
+3. **Distinguish transient from permanent.** Only the patterns above are
+   retryable. A `401`/`403` that persists **after all retries**, or a clearly
+   permission-scoped error, is treated as a genuine scope failure (next bullet).
+   A `404` on a valid endpoint is **not** an auth failure — it means the path is
+   wrong or the resource doesn't exist (do not retry as auth).
+4. **Per-client, before fetching.** At the start of a client's run, make one
+   cheap probe call (e.g. `GET /api/reports/opens` for a single day). If it
+   returns a transient auth error, run the retry/back-off loop until it succeeds
+   **before** issuing the full set of Step 1 calls. This avoids fetching half a
+   client's data with a stale token.
+5. **Only after retries are exhausted** do you skip the client / KPI. When you
+   do skip, record it as `"transient auth failure after N retries: {client}"`
+   so a multi-client run can surface it in the final roll-up (and the operator
+   can simply re-run that client) rather than silently dropping it.
+
+### Other errors
+
+- If an API call returns a **persistent** `401`/`403` (after the retry policy
+  above), log `"scope unavailable: {endpoint}"` and skip the related KPIs
+  (do not alert on missing data).
 - If `/api/reports/timeinapp` or `/api/reports/responses` rejects
   `precision=DAILY`, log a warning and skip those KPIs for the run.
 - If `events` pages exceed 20 pages for one window, log a warning and

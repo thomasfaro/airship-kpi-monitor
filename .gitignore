@@ -5,6 +5,11 @@
 clients.yml
 /.cursor/skills/airship-kpi-monitor/clients.yml
 
+# Local HTML dashboard data — written by the skill each run (no secrets, but
+# contains client routing/state). The dashboard app itself (index.html,
+# styles.css, app.js, dashboard-data.sample.js) IS committed.
+/.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js
+
 # Optional bulk-generator secrets (OAuth creds + local airship-mcp path).
 clients.secrets.yml
 *.secrets.yml
