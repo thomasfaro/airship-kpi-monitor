@@ -1194,15 +1194,16 @@ the data is embedded inline and only reflects this run.
 3. **Content** (run dashboard on top, setup section collapsed at the bottom):
    - **Header** with the global `run_timestamp` (date **and** time) and the run
      window.
-   - **Summary stats**: projects monitored, projects in alert, total open
-     alerts, resolutions today, Slack channels.
-   - **Open alerts table** (the primary content): one row per open alert across
-     all projects — project · severity · `alert key` · scope (OS/Email/SMS/Web)
-     · opened · possible cause. Sort by severity.
-   - **Per-project status table**: project · Slack channel · last run (use
-     `run_timestamp` for clients processed this run) · open-alert count · a
-     `Link` to that project's Slack KPI canvas
+   - **Summary stats**: clients, projects monitored, projects in alert, total
+     open alerts, resolutions today.
+   - **One card per client, grouped by client** (a client can own several
+     projects), sorted by open-alert count. Each card holds a single merged
+     table — one row per project — with: project · Slack channel · last run
+     (use `run_timestamp` for clients processed this run) · alerts (count +
+     worst severity) · **a concise trend summary of recent runs** · a `Link` to
+     that project's Slack KPI canvas
      (`canvas_url = https://{slack_workspace}.slack.com/docs/{slack_team_id}/{slack_canvas_id}`).
+     Color each row by its worst severity (`rowTone`).
    - **Setup section** (collapsed): local file locations
      (`~/.cursor/mcp.json`, `clients.yml`) and the install checklist.
 4. **Never embed secrets** (app keys, client IDs, client secrets). Use only
