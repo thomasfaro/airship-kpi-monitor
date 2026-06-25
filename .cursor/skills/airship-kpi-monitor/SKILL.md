@@ -116,6 +116,13 @@ To find `slack_team_id` for another workspace: open any canvas in Slack →
 `https://{workspace}.slack.com/docs/{TEAM_ID}/{FILE_ID}` — extract `TEAM_ID`
 (the segment starting with `T`).
 
+**Web URL vs deep link:** the web `canvas_url` above is for links posted
+**inside Slack** (alerts in Step 10, canvas content in Step 11) — clicked from
+Slack it opens the canvas in-app. The **local Cursor canvas** (Step 12) instead
+uses a `slack://file?team=…&id=…` deep link, because clicking a Slack web URL
+from Cursor/the browser triggers a web→app redirect chain that opens several
+Chrome tabs.
+
 ## Run modes
 
 The skill supports two ways of supplying the inputs above:
@@ -1199,17 +1206,25 @@ the data is embedded inline and only reflects this run.
    - **One card per client, grouped by client** (a client can own several
      projects), sorted by open-alert count. Each card holds a single merged
      table — one row per project — with: project · Slack channel · last run
-     (use `run_timestamp` for clients processed this run) · alerts (count +
-     worst severity) · **a concise trend summary of recent runs** · a `Link` to
-     that project's Slack KPI canvas
-     (`canvas_url = https://{slack_workspace}.slack.com/docs/{slack_team_id}/{slack_canvas_id}`).
+     (use `run_timestamp`, with **time**, for clients processed this run) ·
+     alerts (count + worst severity) · **a concise trend summary of recent
+     runs** · a `Link` to that project's Slack KPI canvas.
      Color each row by its worst severity (`rowTone`).
    - **Setup section** (collapsed): local file locations
      (`~/.cursor/mcp.json`, `clients.yml`) and the install checklist.
-4. **Never embed secrets** (app keys, client IDs, client secrets). Use only
+4. **Links must be clickable `Link` components, NOT markdown** — markdown is not
+   parsed inside table cells (it renders as raw text). To avoid the browser
+   redirect-tab chain that Slack web URLs trigger when clicked from the Cursor
+   canvas, use **deep links that open the Slack desktop app directly**:
+   - KPI canvas → `slack://file?team={slack_team_id}&id={slack_canvas_id}`
+   - Slack channel → `https://{slack_workspace}.slack.com/app_redirect?channel={channel}`
+   (These deep links are for the **local Cursor canvas only**. Links posted
+   *inside* Slack — Steps 10/11 — keep the web `canvas_url`, which opens
+   correctly in-app there.)
+5. **Never embed secrets** (app keys, client IDs, client secrets). Use only
    names, channels, and canvas IDs from `clients.yml`.
-5. **Write all canvas content in English** (labels, alert causes, callouts).
-6. If the canvas tooling is unavailable, skip this step and log a warning — it
+6. **Write all canvas content in English** (labels, alert causes, callouts).
+7. If the canvas tooling is unavailable, skip this step and log a warning — it
    never blocks the Slack alerts or per-project canvases.
 
 ## Output
