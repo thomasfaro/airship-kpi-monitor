@@ -8,6 +8,12 @@
  * project names, Slack channels, and canvas IDs (all from clients.yml).
  *
  * Severity values: "danger" (critical) | "warning" (watch) | "info".
+ *
+ * `alertsList` (optional, per project) documents each open alert and powers the
+ * per-alert Mute / Unmute buttons. A `muted: true` entry is a declared false
+ * positive: it stays visible (flagged "Muted") but is excluded from the row's
+ * worst severity and from `alerts.count`; count it in `alerts.mutedCount`.
+ * Mute state itself lives in clients.yml `muted_alerts` (see SKILL.md).
  */
 window.AIRSHIP_KPI_DATA = {
   isSample: true,
@@ -25,8 +31,9 @@ window.AIRSHIP_KPI_DATA = {
     clients: 3,
     projects: 4,
     projectsInAlert: 2,
-    openAlerts: 5,
+    openAlerts: 4, // active only (muted false positives are excluded)
     resolutions: 1,
+    muted: 1,
   },
   // Rolling history of recent runs, newest last. Drives the header sparkline.
   history: [
@@ -48,7 +55,13 @@ window.AIRSHIP_KPI_DATA = {
           channel: "cs-sample-retailer",
           canvasId: "F0SAMPLE001",
           lastRun: "2026-06-24 · 20:23 CEST",
-          alerts: { count: 3, worstSeverity: "danger" },
+          alerts: { count: 3, worstSeverity: "danger", mutedCount: 0 },
+          // Per-alert detail powers the Mute buttons; severity drives the dots.
+          alertsList: [
+            { key: "app_opens_drop_ios", severity: "danger", cause: "No campaign Jun 17–20" },
+            { key: "optin_velocity_drop", severity: "warning", cause: "Lower acquisition week" },
+            { key: "direct_response_low", severity: "warning", cause: "Tracking-health signal — verify deep links" },
+          ],
           // For watch/alert projects, `trend` is an ARRAY → rendered as bullet
           // points (one driver per line). For stable projects use a plain string.
           trend: [
@@ -78,10 +91,15 @@ window.AIRSHIP_KPI_DATA = {
           channel: "cs-sample-media",
           canvasId: "F0SAMPLE003",
           lastRun: "2026-06-24 · 20:23 CEST",
-          alerts: { count: 2, worstSeverity: "warning" },
+          // 1 active alert + 1 muted false positive (excluded from worstSeverity).
+          alerts: { count: 1, worstSeverity: "warning", mutedCount: 1 },
+          alertsList: [
+            { key: "email_delay_high:2026-06-23", severity: "warning", cause: "Peak 38.9% at 10:00 local" },
+            { key: "push_sends_drop_android", severity: "info", muted: true, reason: "Campaign-timing artifact, expected" },
+          ],
           trend: [
             "Email delay 8.3% on Jun 23 (peak 38.9% at 10:00 local)",
-            "Other channels nominal",
+            "Push sends dip muted (false positive — campaign timing)",
           ],
           alertHistory: [2, 2, 2, 2, 1, 2, 2],
         },

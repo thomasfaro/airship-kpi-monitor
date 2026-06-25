@@ -170,6 +170,7 @@ operate in registry mode:
    | `time_zone` (IANA; defaults to `UTC`) | `Time zone` |
    | `region` (informational) | Airship region of the MCP server |
    | `custom_thresholds` | overrides of the Step 8 defaults |
+   | `muted_alerts` (optional list) | false-positive alert keys to suppress (see **Muting false positives**) |
 
    The top-level `slack_workspace` / `slack_team_id` keys in `clients.yml`
    (if present) supply the `Slack workspace` / `Slack team ID` inputs used to
@@ -205,6 +206,114 @@ operate in registry mode:
 8. **Update the local views** once at the end: rewrite the Cursor canvas
    (Step 12) and the local HTML dashboard data file (Step 13), rolling up every
    processed client's open alerts, last-run time, and Slack canvas link.
+
+## Muting false positives
+
+A TAM can mark an alert as a **false positive** so it is **no longer monitored**:
+it is never posted to Slack (neither a new-alert nor a resolution message) but
+stays **visible and flagged "Muted"** on the per-project Slack canvas, the
+Cursor canvas, and the HTML dashboard. A mute is **permanent until unmuted**.
+
+### Where mute state lives
+
+The single source of truth is the per-client `muted_alerts` list in the local
+`clients.yml` (routing-only, gitignored — never any secrets). Each item:
+
+```yaml
+muted_alerts:
+  - key: push_sends_drop_android   # exact key, OR a family = the part before ":"
+    reason: "Campaign-timing artifact, expected"
+    muted_since: 2026-06-25         # optional, informational
+```
+
+**Matching.** A `muted_alerts` entry mutes a triggered alert when
+`alert_key == entry.key` **OR** `alert_key.split(":")[0] == entry.key`. So
+`email_delay_high` mutes every dated `email_delay_high:{date}`, while
+`custom_event_rise:purchase` mutes only that one event.
+
+### Three ways to declare a mute (all converge on `clients.yml`)
+
+1. **Chat prompt** — recognise these canonical forms (case-insensitive, quotes
+   optional) and act on them as a lightweight operation, **without** running the
+   full KPI workflow unless asked:
+   - Mute: `Mute airship-kpi-monitor alert "<key>" for project "<project>" (false positive). Reason: <reason>`
+   - Unmute: `Unmute airship-kpi-monitor alert "<key>" for project "<project>"`
+   Steps: find the matching `clients.yml` entry by `name` (or `brand_name`);
+   for a mute, add/update the `key` in its `muted_alerts` (dedupe by key, keep
+   the newest `reason`); for an unmute, remove that key. Then, best-effort,
+   refresh that project's mute flags on the Slack canvas (Step 11 Status column),
+   the Cursor canvas (Step 12), and the dashboard data (Step 13). Confirm the
+   change to the user. If the project is not found, report it and stop.
+
+2. **Dashboard "Mute" button** — the local HTML dashboard has two modes:
+   - **Served** (the optional local server `dashboard/serve.py` is running, e.g.
+     auto-started by the `start-dashboard.sh` hook): the Mute/Unmute buttons
+     **apply directly**, writing `clients.yml` via the server (no chat round-trip).
+   - **Static** (`file://`, no server): the button **copies the canonical prompt
+     above**; the user pastes it into Cursor chat, which lands in case 1.
+
+3. **Slack canvas edit** — a TAM sets an alert's **Status** to `Muted` (and may
+   add a reason) directly in the per-project KPI canvas Open Alerts table. The
+   skill reads this canvas every run (Step 7); on the **next run** it honours the
+   Muted status and **syncs it into `clients.yml` `muted_alerts`** (union with
+   existing; dedupe by key). This is not real-time — the skill is a
+   Cursor-triggered agent that polls each run, not a hosted Slack bot.
+
+### Enforcement (during a run)
+
+In **Step 9**, before classifying a triggered alert as new/ongoing/resolved,
+check it against the merged mute set (`clients.yml` `muted_alerts` ∪ any
+canvas rows already marked `Muted`). If it matches, classify it **Muted**:
+never add it to "alerts to post" nor "resolutions to post"; still record it on
+the canvas with `last_seen` updated and `Status = Muted`. Muted alerts are
+excluded from any "worst severity" used to summarise active alerts, but remain
+visible everywhere with their reason.
+
+## Editing thresholds (per project)
+
+Default thresholds live in **Step 8**. A TAM can override any of them **per
+project** without editing this skill. Overrides live in the per-client
+`custom_thresholds` map in the local `clients.yml` (routing-only, gitignored —
+never secrets), and win over the Step 8 defaults for that project (Step 0
+mapping). Removing a key resets it to the default.
+
+```yaml
+custom_thresholds:
+  push_sends_drop_pct: 40       # any Step 8 key (see dashboard/thresholds-catalog.js)
+  email_delay_rate_max: 15
+```
+
+Two ways to edit, mirroring muting:
+
+1. **Dashboard "Thresholds" button** — opens an editor listing every threshold
+   (grouped, prefilled with the effective value, with per-key reset).
+   - **Served**: Save **applies directly** (POST `/api/thresholds` → `clients.yml`).
+   - **Static** (`file://`): Save **copies canonical prompts** to paste into chat.
+2. **Chat prompt** — recognise these canonical forms (case-insensitive, quotes
+   optional) and act on them as a lightweight operation, **without** running the
+   full KPI workflow unless asked:
+   - Set: `Set airship-kpi-monitor threshold "<key>" to <value> for project "<project>"`
+   - Reset: `Reset airship-kpi-monitor threshold "<key>" to default for project "<project>"`
+   Steps: find the `clients.yml` entry by `name`/`brand_name`; set/merge the key
+   in `custom_thresholds` (numeric value), or delete it on reset; if the map
+   becomes empty, drop it. Validate `<key>` against the catalog
+   (`dashboard/thresholds-catalog.js`, which mirrors Step 8). Confirm to the user.
+
+The catalog file `dashboard/thresholds-catalog.js` is the **UI mirror of Step 8
+defaults** and is read by both the browser and `serve.py`. When you change a
+default in Step 8, update the catalog too (and vice-versa), or the editor will
+show a stale default.
+
+## Editing the routing registry (Setup view)
+
+The dashboard's **Setup** view (served mode only) does CRUD on the **non-secret
+routing registry** — add / edit / remove a project's `name`, `brand_name`,
+`airship_mcp`, `slack_channel`, `slack_canvas_id`, `region`, `time_zone`,
+`enabled` in `clients.yml`. The server **rejects any secret-shaped field**, so
+credentials never land in `clients.yml`. **Credentials (`~/.cursor/mcp.json`) and
+MCP smoke-tests stay agent/manual** — the browser can do neither; the Setup view
+just emits copy-prompts for those (guided setup + smoke-test). In `file://` mode
+the Setup view is read-only with a notice to start the server.
 
 ## Data sources (traceability reference)
 
@@ -523,7 +632,12 @@ Parse the canvas to extract:
    Extract `ios.unique_devices`, `ios.opted_in`, `ios.uninstalled`,
    `android.*`, `web.*`, `sms.*` (if present).
 2. **Currently open alerts** — list of alert keys already posted and not yet
-   resolved (format: `ALERT_KEY | os | opened_date | last_seen_date`).
+   resolved (format: `ALERT_KEY | os | opened_date | last_seen_date | status`).
+   Also read each row's **Status** (`Active` / `Muted`) and its reason. Any row
+   a TAM has set to `Muted` is a **mute declared from Slack**: merge its key into
+   the run's mute set and **sync it into `clients.yml` `muted_alerts`** (union;
+   dedupe by key; keep any reason) so the mute persists across runs. See
+   **Muting false positives**.
 3. **Email deliverability health history** — rows from the
    `## 📧 Email deliverability health — history` table (date, delivered, delay,
    delay %, spam complaints, spam %). Used to avoid duplicate rows when
@@ -535,6 +649,11 @@ them as `"n/a (canvas history pending)"` and do not trigger thresholds.
 ### Step 8 — Compute deltas and evaluate thresholds
 
 #### Default thresholds (overridden by custom thresholds in the prompt)
+
+> These defaults are mirrored for the dashboard's per-project threshold editor in
+> `dashboard/thresholds-catalog.js`. Keep the two in sync: any change here must be
+> reflected there (and vice-versa). Per-project overrides live in `clients.yml`
+> `custom_thresholds` (see **Editing thresholds**).
 
 ```yaml
 # App (evaluated PER OS: ios, android)
@@ -877,18 +996,27 @@ Example outputs:
 
 ### Step 9 — Anti-duplication check
 
-Compare the set of triggered alert keys against the **open alerts list** read
-from the canvas in Step 7.
+First build the **mute set** = `clients.yml` `muted_alerts` ∪ any canvas rows
+already marked `Status = Muted` (Step 7). Then compare the set of triggered
+alert keys against the **open alerts list** read from the canvas in Step 7.
 
-- **New alert** (key not in open list) → add to "alerts to post"
-- **Resolved alert** (key was open, threshold no longer breached) → add to
-  "resolutions to post"
-- **Ongoing alert** (key still breached, already open) → do NOT post again,
-  only update `last_seen_date` in the canvas
+- **Muted alert** (key matches the mute set — exact key OR family, the part
+  before `:`) → classify **muted**: do NOT add to "alerts to post" nor to
+  "resolutions to post". Still record it in the canvas with `Status = Muted`,
+  its reason, and `last_seen_date` updated. Exclude it from any "worst severity"
+  used to summarise active alerts. **Evaluate this first** — a muted key never
+  becomes new/ongoing/resolved.
+- **New alert** (key not in open list, not muted) → add to "alerts to post"
+- **Resolved alert** (key was open, threshold no longer breached, not muted) →
+  add to "resolutions to post"
+- **Ongoing alert** (key still breached, already open, not muted) → do NOT post
+  again, only update `last_seen_date` in the canvas
 
 ### Step 10 — Post Slack messages
 
-**Only if there are new alerts or resolutions to post.**
+**Only if there are new alerts or resolutions to post.** Never post a message
+(new alert or resolution) for a key in the mute set — muted false positives are
+silent by design.
 
 All Slack alert and resolution messages are in **English** (labels, possible-cause
 text, and footnotes).
@@ -1040,7 +1168,7 @@ Instead, follow this section-by-section workflow every run:
    | Section to update | How |
    |---|---|
    | `_Last run:` line | `replace` the paragraph section_id with the new date line |
-   | `## 🚨 Open Alerts` | `replace` the section with the refreshed alerts table |
+   | `## 🚨 Open Alerts` | `replace` the section with the refreshed alerts table (keep the `Status` column; carry `🔕 Muted` rows over and never drop a muted key just because it's silent) |
    | `## 📊 This week at a glance` | `replace` each `###` subsection (App, Push, Acquisition, Email, Email deliverability health — current window, Web push, SMS, Custom events) individually |
    | `## 📱 Installed base` | `replace` the section with today's snapshot table |
    | `## 📈 Devices history` | `prepend` a new row at the top of the table — **never replace the full table** |
@@ -1070,11 +1198,16 @@ Canvas format (used for first-run creation and as section content reference):
 _Last run: {today} · Window {current_window_start}→{current_window_end} vs {previous_window_start}→{previous_window_end}_
 
 ## 🚨 Open Alerts
-| Alert key | OS | Opened | Last seen | Possible cause |
-|---|---|---|---|---|
-| push_sends_drop_ios | iOS | 2026-06-15 | 2026-06-22 | No campaign Jun 17 |
+| Alert key | OS | Opened | Last seen | Status | Possible cause |
+|---|---|---|---|---|---|
+| push_sends_drop_ios | iOS | 2026-06-15 | 2026-06-22 | Active | No campaign Jun 17 |
+| push_sends_drop_android | Android | 2026-06-15 | 2026-06-22 | 🔕 Muted | Campaign-timing artifact (false positive) |
 
 _(No open alerts → write "No open alerts this week.")_
+_(**Status**: `Active` or `🔕 Muted`. A TAM can mute a false positive by setting
+this cell to `Muted` — the skill reads it next run, stops posting it to Slack,
+and syncs it into `clients.yml` `muted_alerts`. See **Muting false positives**.
+Muted rows stay listed but are never re-posted and don't count toward severity.)_
 
 ## 📊 This week at a glance
 
@@ -1183,7 +1316,7 @@ _(Keep last 30 rows. Prepend new days from Step 3b; do not duplicate a date alre
 3. Email deliverability health history — **prepend** daily rows from Step 3b
    (30 rows max; replace row if date already exists).
 4. Installed base — replace with today's snapshot (add/remove SMS and Web rows as needed).
-5. Open Alerts — replace with updated table: add new alerts, remove resolved, update `last_seen`.
+5. Open Alerts — replace with updated table: add new alerts, remove resolved, update `last_seen`, and set each row's `Status` (`Active` / `🔕 Muted`). Keep muted rows even though they are never posted to Slack.
 6. Last run line — replace the paragraph with the new date and window.
 7. Keep source endpoint labels under every section header.
 
@@ -1219,7 +1352,10 @@ the data is embedded inline and only reflects this run.
      (use `run_timestamp`, with **time**, for clients processed this run) ·
      alerts (count + worst severity) · **a concise trend summary of recent
      runs** · a `Link` to that project's Slack KPI canvas.
-     Color each row by its worst severity (`rowTone`).
+     Color each row by its worst severity (`rowTone`). **Muted** alerts are
+     excluded from the row's worst severity (so muting calms the color) but a
+     muted count is still shown (e.g. `2 Critical · 1 muted`) so the false
+     positive stays visible.
    - **Setup section** (collapsed): local file locations
      (`~/.cursor/mcp.json`, `clients.yml`) and the install checklist.
 4. **Links must be clickable `Link` components, NOT markdown** — markdown is not
@@ -1247,9 +1383,17 @@ for sharing the view on a teammate's machine. Run it at the **same time as Step
 run).
 
 The dashboard **app** is committed in the repo and contains **no data**:
-`.cursor/skills/airship-kpi-monitor/dashboard/{index.html,styles.css,app.js,dashboard-data.sample.js}`.
+`.cursor/skills/airship-kpi-monitor/dashboard/{index.html,styles.css,app.js,dashboard-data.sample.js,thresholds-catalog.js,serve.py,serve.command}`.
 **Never edit those committed files in a run.** A run writes **only** the data
 file:
+
+> **Optional local server.** `dashboard/serve.py` (auto-started by the
+> `start-dashboard.sh` hook, or launched manually via `serve.command` /
+> `uv run --with ruamel.yaml serve.py`, at `http://127.0.0.1:8787`) upgrades the
+> page from read-only to direct editing of `clients.yml` (mutes, per-project
+> thresholds, routing CRUD). It is **localhost-only**, **never** touches secrets,
+> and does **not** write `dashboard-data.js` — only this run rewrites that file.
+> The data-file contract below is unchanged whether or not the server runs.
 
 - **Write to**: `.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js`
   (this path is **gitignored** — local only). Browsers cannot `fetch()` over
@@ -1277,7 +1421,11 @@ file:
      clients: [
        { name: "<client>", projects: [
          { name: "<project>", channel: "<slack_channel>", canvasId: "<slack_canvas_id>",
-           lastRun: "<run_timestamp>", alerts: { count: <n>, worstSeverity: "danger|warning|info|null" },
+           lastRun: "<run_timestamp>",
+           alerts: { count: <active count>, worstSeverity: "danger|warning|info|null", mutedCount: <n> },
+           // Optional per-alert detail — enables the dashboard Mute/Unmute buttons.
+           alertsList: [ { key: "<alert_key>", severity: "danger|warning|info",
+                          cause: "<short cause>", muted: <true|false>, reason: "<why muted, if muted>" }, … ],
            trend: <"string" | ["bullet", "bullet", …]>, alertHistory: [ <n>, … ] }  // newest last
        ] }
      ],
@@ -1289,8 +1437,15 @@ file:
    ```
 
    - Group `clients` by client (a client can own several projects), mirroring
-     Step 12. `worstSeverity` is the most severe open alert on that project
-     (`danger` > `warning` > `info`; `null` when none).
+     Step 12. `worstSeverity` is the most severe **non-muted** open alert on that
+     project (`danger` > `warning` > `info`; `null` when none or all muted).
+     `alerts.count` counts **active (non-muted)** alerts; `mutedCount` counts the
+     muted ones separately so they stay visible without inflating severity.
+   - **`alertsList`** (optional but recommended when there are open alerts): one
+     entry per open alert with its `key`, `severity`, short `cause`, and `muted`
+     flag (+ `reason` when muted). The dashboard renders a per-alert Mute button
+     (or Unmute + a "Muted" pill for already-muted ones). Muted entries are
+     de-emphasised and excluded from `worstSeverity`.
    - **`trend` format:** for projects in **watch or alert** (`worstSeverity`
      `warning` or `danger`), write `trend` as an **array of short bullet
      strings** — one driver per line (e.g. each impacted metric, the cause, the

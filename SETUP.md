@@ -23,9 +23,20 @@ only about credentials and routing:
   the run dashboard (open alerts, last-run times, links to each Slack KPI
   canvas). No secrets.
 - A local **HTML dashboard** (`.cursor/skills/airship-kpi-monitor/dashboard/`)
-  the user can open in any browser with no server. The app is committed (no
-  data); the skill writes its local, gitignored data file (`dashboard-data.js`)
-  on each run (SKILL.md Step 13). No secrets.
+  the user can open in any browser. The app is committed (no data); the skill
+  writes its local, gitignored data file (`dashboard-data.js`) on each run
+  (SKILL.md Step 13). No secrets. It also ships an **optional local server**
+  (`serve.py`, auto-started by `.cursor/hooks/start-dashboard.sh` or launched via
+  `serve.command`, at `http://127.0.0.1:8787`) that lets the user manage the
+  **routing registry** (add/edit/remove projects), **mute** alerts, and **edit
+  thresholds** directly from the page — writing only the gitignored `clients.yml`,
+  never secrets.
+
+> **Division of labour.** This playbook owns the **secret part** (credentials in
+> `~/.cursor/mcp.json`) and the **MCP smoke-tests** — the dashboard cannot do
+> either. The non-secret **routing registry** can be created/edited here *or*,
+> once the server runs, from the dashboard **Setup** tab. Prefer whichever the
+> user finds easier; both write the same `clients.yml`.
 
 ## Hard rules (read before doing anything)
 
@@ -171,6 +182,15 @@ Append a **non-secret** entry to `<skill dir>/clients.yml` (no credentials):
 Several entries may reuse the same `slack_channel` (multiple projects for one
 client) — give each its own `slack_canvas_id`.
 
+An optional per-client `muted_alerts` list silences false-positive alerts (see
+**Muting false positives** below). Leave it out unless seeding a known one. An
+optional `custom_thresholds` map overrides Step 8 defaults per project.
+
+> The user can also do this routing step from the dashboard **Setup** tab once the
+> local server is running (it writes the same `clients.yml`). Offer it if they
+> prefer a form over YAML; you still own credentials (Step 5) and the smoke-test
+> (Step 7).
+
 ### Step 7 — Smoke-test the connection
 
 Call the new MCP server: `GET /api/reports/opens` via `call_airship_api`.
@@ -194,11 +214,49 @@ the next client (if any).
 - Offer a first run: `Run airship-kpi-monitor for <Client name>.`
 - Remind the user that the **first run returns a canvas ID** — paste it into the
   client's `slack_canvas_id` in `clients.yml` so later runs reuse the same canvas.
-- Surface the **local HTML dashboard** and offer to open it after the first run:
-  `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`. Note it shows
-  labelled sample data until a run writes the local `dashboard-data.js`.
+- Surface the **local dashboard** as the user's main surface:
+  - **Served (recommended):** the `.cursor/hooks/start-dashboard.sh` hook
+    auto-starts the server; open `http://127.0.0.1:8787` (or double-click
+    `dashboard/serve.command`). There they can manage routing (**Setup** tab),
+    mute alerts, and edit per-project thresholds directly.
+  - **Static:** `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`
+    (read-only; actions copy prompts). It shows labelled sample data until a run
+    writes the local `dashboard-data.js`.
 - Point to **run modes** (one-off / subset / `/loop`) in
   [README.md](README.md) and [MODOP.md](MODOP.md) §2.3.
+- Mention **muting false positives** and **per-project thresholds** (below) so the
+  user knows alerts can be silenced and tuned without losing visibility.
+
+## Muting false positives
+
+A false-positive alert can be **muted**: no longer monitored (never posted to
+Slack) but still **visible and flagged "Muted"** on the Slack canvas, the Cursor
+canvas, and the HTML dashboard. Mute state is permanent until unmuted and lives
+in the per-client `muted_alerts` list in the local `clients.yml` (no secrets).
+Three ways to declare it, all converging on `clients.yml`:
+
+- **Dashboard**: the **Mute** / **Unmute** button next to an alert — applies
+  directly in **served mode**, or copies the prompt to paste into chat in
+  **static** (`file://`) mode.
+- **Prompt**: `Mute airship-kpi-monitor alert "<key>" for project "<project>" (false positive). Reason: <reason>` (and `Unmute …` to reverse).
+- **Slack**: set an alert's **Status** to `Muted` in the per-project KPI canvas
+  Open Alerts table; the skill syncs it into `clients.yml` on the next run.
+
+A `muted_alerts` key matches an alert exactly or as a family (the part before
+`:`). See SKILL.md **Muting false positives** for the full behaviour.
+
+## Editing thresholds (per project)
+
+Any Step 8 default can be overridden per project via `custom_thresholds` in the
+local `clients.yml` (no secrets). Two ways:
+
+- **Dashboard "Thresholds" button** — served mode saves directly; static mode
+  copies prompts.
+- **Prompt**: `Set airship-kpi-monitor threshold "<key>" to <value> for project "<project>"`
+  (and `Reset airship-kpi-monitor threshold "<key>" to default for project "<project>"`).
+
+Valid keys are catalogued in `dashboard/thresholds-catalog.js` (mirrors SKILL.md
+Step 8). See SKILL.md **Editing thresholds** for behaviour.
 
 ## Monitoring canvas
 
@@ -236,4 +294,6 @@ the setup details kept in a collapsed section. See SKILL.md Step 12.
 The same run also writes the **HTML dashboard** data file
 (`.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js`, SKILL.md
 Step 13) — same rules: local-only, gitignored, never any secrets. The committed
-dashboard app is never edited by a run.
+dashboard app (including `serve.py`, `serve.command`, `thresholds-catalog.js`) is
+never edited by a run; the server's runtime artifacts (`.server.pid`,
+`.server.log`) are gitignored.

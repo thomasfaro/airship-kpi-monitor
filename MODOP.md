@@ -10,6 +10,14 @@
 > `~/.cursor/mcp.json`, creates `clients.yml`, and smoke-tests). This MODOP is
 > the **manual reference / fallback** for doing the same steps by hand.
 
+> **How setup is split.** Only two things truly need the agent / terminal:
+> **(1) credentials** in `~/.cursor/mcp.json` and **(2) MCP smoke-tests** — the
+> browser can do neither (Part 1). **Everything else** — adding / editing /
+> removing projects, muting false positives, tuning thresholds — is done from the
+> **local dashboard** once its server is running (Part 2). The dashboard server is
+> localhost-only, edits only the gitignored `clients.yml`, and never touches
+> secrets.
+
 ---
 
 ## Part 1 — Prerequisites (once per TAM workstation)
@@ -254,6 +262,12 @@ Optional:
 
 ### 2.2 Add the client to your local `clients.yml`
 
+> **Easiest path (served dashboard):** start the dashboard server (see §2.4) and
+> use the **Setup** tab to add / edit / remove projects with a form — no YAML by
+> hand. It writes the same `clients.yml` described below (routing only, no
+> secrets). The manual template below is the fallback when the server isn't
+> running.
+
 `clients.yml` is your own **local, gitignored** registry — the repo never ships
 or commits it. On first setup, create it yourself in the skill folder
 (`<workspace>/.cursor/skills/airship-kpi-monitor/clients.yml`) with the template
@@ -317,26 +331,68 @@ from Cursor chat with the relevant MCP servers enabled:
   immediately, then every 24h. Requires Cursor to stay open; uses your local
   MCP servers (no hosting needed).
 
-### 2.4 Local roll-up views (canvas + HTML dashboard)
+### 2.4 The local dashboard (your main surface)
 
-Beyond the per-project Slack KPI canvases (the live, shareable source of truth),
-each run refreshes two **local, gitignored, secret-free** roll-up views so you
-can scan all your clients at a glance:
+Beyond the per-project Slack KPI canvases (the live, shareable source of truth)
+and the Cursor canvas roll-up beside the chat
+(`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`, SKILL.md
+Step 12), the **local dashboard** is where you watch runs and manage config.
 
-- **Cursor canvas** —
-  `~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
-  rendered beside the chat (SKILL.md Step 12).
-- **HTML dashboard** — a designed page you can open in **any browser, no server,
-  without Cursor** (handy on a teammate's machine):
+**Served mode (recommended) — edit directly.** Run the bundled server and the
+page writes back to `clients.yml` with one click:
 
-  ```bash
-  open .cursor/skills/airship-kpi-monitor/dashboard/index.html
-  ```
+- **Auto-start**: the `.cursor/hooks/start-dashboard.sh` session-start hook
+  launches it in the background when you open the workspace (fail-open,
+  idempotent). Open **`http://127.0.0.1:8787`**.
+- **Manual**: double-click `.cursor/skills/airship-kpi-monitor/dashboard/serve.command`
+  (macOS), or run `uv run --with ruamel.yaml serve.py` in the `dashboard/` folder.
 
-  The app (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`) ships
-  with the repo and holds **no client data**; your real data lives in the local,
-  gitignored `dashboard-data.js` that the skill writes each run (SKILL.md
-  Step 13). Until your first run writes it, the page shows labelled sample data.
+In served mode you can: **Mute / Unmute** alerts, edit **per-project thresholds**
+(§4), and manage the **routing registry** in the **Setup** tab (§2.2). The server
+binds `127.0.0.1` only, edits **only** the gitignored `clients.yml`, and
+**rejects any secret-shaped field**. Credentials and smoke-tests stay with the
+agent (the Setup tab provides copy-prompts for those). Disable auto-start by
+removing the `start-dashboard.sh` entry in `.cursor/hooks.json`.
+
+**Static mode (no server) — read-only.** Open it directly anywhere, even on a
+teammate's machine; actions copy a paste-into-chat prompt instead of writing:
+
+```bash
+open .cursor/skills/airship-kpi-monitor/dashboard/index.html
+```
+
+The app (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`,
+`thresholds-catalog.js`, `serve.py`, `serve.command`) ships with the repo and
+holds **no client data**; your real data lives in the local, gitignored
+`dashboard-data.js` that the skill writes each run (SKILL.md Step 13). Until your
+first run writes it, the page shows labelled sample data.
+
+### 2.5 Muting false positives
+
+When an alert is a false positive, mute it so it stops being monitored (never
+posted to Slack) while staying **visible and flagged "Muted"** on every view.
+Mutes are **permanent until you unmute** and live in the per-client
+`muted_alerts` list in your local `clients.yml` (no secrets). Three ways:
+
+1. **Dashboard** — the **Mute** / **Unmute** button next to an alert. In **served
+   mode** it applies immediately; in **static mode** it copies the prompt to paste
+   into chat.
+2. **Prompt** in chat:
+   - `Mute airship-kpi-monitor alert "<key>" for project "<project>" (false positive). Reason: <reason>`
+   - `Unmute airship-kpi-monitor alert "<key>" for project "<project>"`
+3. **Slack** — set an alert's **Status** to `Muted` in the per-project KPI canvas
+   Open Alerts table; the skill honours it and syncs it into `clients.yml` on the
+   next run (not real-time).
+
+A key matches exactly or as a **family** (the part before `:`), e.g.
+`email_delay_high` mutes every dated `email_delay_high:{date}`.
+
+```yaml
+    muted_alerts:
+      - key: push_sends_drop_android
+        reason: "Campaign-timing artifact, expected"
+        muted_since: 2026-06-25
+```
 
 ---
 
@@ -376,8 +432,17 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
 
 ## Part 4 — Adjusting thresholds for a client
 
-To override a threshold for one client, add it to `custom_thresholds` in your
-local `clients.yml`:
+Two ways, both writing the per-client `custom_thresholds` map in your local
+`clients.yml` (removing a key resets it to the default):
+
+1. **Dashboard (recommended)** — click **⚙ Thresholds** on a project. The editor
+   lists every threshold (grouped, prefilled, with per-key **reset**). Served mode
+   **saves directly**; static mode **copies prompts** to paste into chat.
+2. **Prompt** in chat:
+   - `Set airship-kpi-monitor threshold "<key>" to <value> for project "<project>"`
+   - `Reset airship-kpi-monitor threshold "<key>" to default for project "<project>"`
+
+Or edit the YAML by hand:
 
 ```yaml
 custom_thresholds:
@@ -385,7 +450,8 @@ custom_thresholds:
   email_bounce_max: 3
 ```
 
-Full list of available threshold keys: see `SKILL.md → Default thresholds`.
+Full list of available threshold keys: see `SKILL.md → Default thresholds` (also
+mirrored in `dashboard/thresholds-catalog.js`, which powers the editor).
 
 ---
 
@@ -400,6 +466,8 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 | Canvas not found | Wrong canvas ID in `clients.yml` | Re-run Part 3 to get the correct ID |
 | Device delta shows `n/a` | Less than 7 daily runs completed | Expected — fills automatically after 7 days |
 | HTML dashboard shows "sample data" / is empty | No run has written the local `dashboard-data.js` yet | Run the skill once; it writes `.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js` (gitignored) |
+| Dashboard badge says "Read-only" / edits only copy prompts | The local server isn't running | Double-click `dashboard/serve.command` or run `uv run --with ruamel.yaml serve.py`, then open `http://127.0.0.1:8787`. Needs `uv`. |
+| Dashboard server won't start | Port 8787 busy, or `uv` missing | Free the port or set `AIRSHIP_KPI_DASHBOARD_PORT`; install `uv` (`brew install uv`). Auto-start is fail-open and just no-ops. |
 
 ---
 
@@ -408,9 +476,12 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 All TAMs share the same skill from the GitHub repo. To update the logic or
 default thresholds:
 
-1. Edit `.cursor/skills/airship-kpi-monitor/SKILL.md` in the repo
+1. Edit `.cursor/skills/airship-kpi-monitor/SKILL.md` in the repo (under
+   `Default thresholds`) — **and** mirror the same change in
+   `dashboard/thresholds-catalog.js` so the dashboard editor stays in sync.
 2. Commit and push
 3. Each TAM gets the new version on their next `git pull` of the repo. The
    bundled session-start hook (`.cursor/hooks/update-skill.sh`) does this
    automatically with `git pull --ff-only`; the update is picked up on the next
-   run (reload the window if the skill list is cached).
+   run (reload the window if the skill list is cached). Per-project overrides stay
+   in each TAM's local `clients.yml`.

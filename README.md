@@ -84,6 +84,13 @@ Slack KPI canvas).
 Credentials are written only to your local `~/.cursor/mcp.json` — never to the
 repo, `clients.yml`, or the canvas.
 
+**Split of responsibilities.** Two things genuinely need the agent / terminal:
+the **credentials** in `~/.cursor/mcp.json` and the **MCP smoke-tests** (the
+browser can do neither). Everything else — adding / editing / removing projects,
+muting, threshold tuning — you can do later from the **Setup** and **Monitor**
+tabs of the [local dashboard](#local-dashboard--the-primary-surface) once the
+server is running.
+
 ---
 
 ## Manual installation (alternative)
@@ -141,26 +148,97 @@ local MCP servers.
 
 ---
 
-## Local views — Cursor canvas + HTML dashboard
+## Local dashboard — the primary surface
 
-Each run refreshes two **local, gitignored, secret-free** roll-up views (in
-addition to the per-project Slack KPI canvases, which remain the live, shareable
-source of truth):
+A richly-designed local web page is the main way to **watch** the latest run and
+**manage** your config (mute false positives, tune thresholds, edit routing) —
+without leaving anything secret on disk. It comes in two modes:
 
-- **Cursor canvas** — `~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
-  rendered beside the chat (SKILL.md Step 12).
-- **HTML dashboard** — a richly-designed page you can open in **any browser, with
-  no server and without Cursor** — handy for viewing on a teammate's machine:
+### Served mode (recommended) — edit directly from the page
 
-  ```bash
-  open .cursor/skills/airship-kpi-monitor/dashboard/index.html
-  ```
+Run the bundled local server and the page can **write back** to your local
+`clients.yml` with one click — no copy-paste:
 
-  The dashboard **app** (`index.html`, `styles.css`, `app.js`,
-  `dashboard-data.sample.js`) is **committed** and contains **no client data** —
-  everyone gets it on clone. The real data lives in `dashboard-data.js`, a
-  **local, gitignored** file the skill rewrites each run (SKILL.md Step 13).
-  Until the first run writes it, the page shows clearly-labelled sample data.
+- **Auto-start**: a session-start hook (`.cursor/hooks/start-dashboard.sh`)
+  launches it in the background when you open the workspace in Cursor (fail-open,
+  idempotent). Then just open **`http://127.0.0.1:8787`**.
+- **Manual**: double-click `.cursor/skills/airship-kpi-monitor/dashboard/serve.command`
+  (macOS), or run `uv run --with ruamel.yaml serve.py` in the `dashboard/` folder.
+
+In served mode you can, from the page:
+- **Mute / Unmute** alerts directly,
+- edit **per-project thresholds** (every threshold, prefilled, with reset),
+- manage the **routing registry** in the **Setup** tab — add / edit / remove
+  projects (name, brand, MCP server, Slack channel, canvas ID, region, time zone,
+  enabled).
+
+The server is **localhost-only** (binds `127.0.0.1`, same-origin checks), edits
+**only** the gitignored `clients.yml`, and **rejects any secret-shaped field** —
+credentials (`~/.cursor/mcp.json`) and MCP smoke-tests stay with the agent (the
+Setup tab gives you ready-to-paste prompts for those). To disable auto-start,
+remove the `start-dashboard.sh` entry in `.cursor/hooks.json`.
+
+### Static mode (no server) — read-only + copy-prompts
+
+You can always open the page directly, with no server and without Cursor — handy
+for a teammate's machine:
+
+```bash
+open .cursor/skills/airship-kpi-monitor/dashboard/index.html
+```
+
+Here the page is read-only: Mute / threshold / setup actions **copy a
+ready-to-paste prompt** for Cursor chat instead of writing files.
+
+The dashboard **app** (`index.html`, `styles.css`, `app.js`,
+`dashboard-data.sample.js`, `thresholds-catalog.js`, `serve.py`, `serve.command`)
+is **committed** and contains **no client data** — everyone gets it on clone. The
+real data lives in `dashboard-data.js`, a **local, gitignored** file the skill
+rewrites each run (SKILL.md Step 13). Until the first run writes it, the page
+shows clearly-labelled sample data. A **Cursor canvas** roll-up is also rendered
+beside the chat (`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
+SKILL.md Step 12).
+
+## Muting false positives
+
+If an alert is a false positive, mute it so it is **no longer monitored** — never
+posted to Slack (no new-alert or resolution message) — while staying **visible
+and flagged "Muted"** on the Slack canvas, the Cursor canvas, and the HTML
+dashboard. Mutes are **permanent until you unmute**. State lives in the
+per-client `muted_alerts` list in your local `clients.yml` (routing-only,
+gitignored — never any secrets).
+
+Three ways to mute (all converge on `clients.yml`):
+
+1. **From the dashboard** — click **Mute** / **Unmute** next to an alert. In
+   **served mode** it applies immediately; in **static mode** the page copies the
+   ready-to-paste prompt for chat.
+2. **By prompt** in Cursor chat:
+   - `Mute airship-kpi-monitor alert "<key>" for project "<project>" (false positive). Reason: <reason>`
+   - `Unmute airship-kpi-monitor alert "<key>" for project "<project>"`
+3. **From Slack** — set an alert's **Status** to `Muted` in the per-project KPI
+   canvas Open Alerts table. The skill reads it on the **next run** and syncs it
+   into `clients.yml` (not real-time — it polls each run).
+
+A `muted_alerts` key matches an alert exactly, or as a **family** (the part
+before `:`): e.g. `email_delay_high` mutes every dated `email_delay_high:{date}`.
+Muted alerts are excluded from severity counts but keep their reason.
+
+## Editing thresholds (per project)
+
+Tune any alert threshold for a single project — no skill edit needed. Overrides
+live in the per-client `custom_thresholds` map in your local `clients.yml`;
+removing a key resets it to the default.
+
+- **From the dashboard** — the per-project **Thresholds** button opens an editor
+  with every threshold (grouped, prefilled, per-key reset). Served mode **saves
+  directly**; static mode **copies prompts**.
+- **By prompt**:
+  - `Set airship-kpi-monitor threshold "<key>" to <value> for project "<project>"`
+  - `Reset airship-kpi-monitor threshold "<key>" to default for project "<project>"`
+
+The editor's catalog (`dashboard/thresholds-catalog.js`) mirrors the
+[Default thresholds](#default-thresholds) below.
 
 ---
 
@@ -270,8 +348,10 @@ Minimum volumes (thresholds skipped if previous window is below these):
 ## Changing default thresholds globally
 
 Edit `.cursor/skills/airship-kpi-monitor/SKILL.md` under `Default thresholds`,
-commit and push. Anyone who pulls the repo (the bundled session-start hook pulls
-automatically) picks up the new defaults on their next run.
+**and** mirror the same change in `dashboard/thresholds-catalog.js` (the editor's
+catalog), then commit and push. Anyone who pulls the repo (the bundled
+session-start hook pulls automatically) picks up the new defaults on their next
+run. Per-project overrides stay in each TAM's local `clients.yml`.
 
 ---
 
@@ -280,18 +360,22 @@ automatically) picks up the new defaults on their next run.
 ```
 airship-kpi-monitor/
 ├── .cursor/
-│   ├── hooks.json                       ← registers the auto-update hook
+│   ├── hooks.json                       ← registers auto-update + dashboard auto-start hooks
 │   ├── hooks/
-│   │   └── update-skill.sh              ← session-start: git pull --ff-only
+│   │   ├── update-skill.sh              ← session-start: git pull --ff-only
+│   │   └── start-dashboard.sh          ← session-start: launch dashboard server (fail-open)
 │   └── skills/
 │       └── airship-kpi-monitor/
 │           ├── SKILL.md                 ← core logic (read by Cursor agents)
 │           ├── clients.secrets.example.yml  ← template for the optional MCP generator
-│           ├── dashboard/               ← local HTML dashboard (committed app, no data)
+│           ├── dashboard/               ← local dashboard (committed app, no data)
 │           │   ├── index.html           ← open in any browser (no server)
 │           │   ├── styles.css
 │           │   ├── app.js
-│           │   └── dashboard-data.sample.js  ← sample data; real dashboard-data.js is local/gitignored
+│           │   ├── dashboard-data.sample.js  ← sample data; real dashboard-data.js is local/gitignored
+│           │   ├── thresholds-catalog.js     ← threshold catalog (mirrors SKILL.md Step 8)
+│           │   ├── serve.py             ← optional local server (mute / thresholds / routing CRUD)
+│           │   └── serve.command        ← macOS one-click launcher for serve.py
 │           └── scripts/
 │               └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
 ├── SETUP.md                     ← agent-guided installer playbook
