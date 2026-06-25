@@ -14,20 +14,25 @@
 
 ## Part 1 — Prerequisites (once per TAM workstation)
 
-### 1.1 Install the skill
+### 1.1 Install the skill (workspace skill)
 
-Clone this repository into your Cursor skills folder:
-
-```bash
-git clone https://github.com/thomasfaro/airship-kpi-monitor \
-  ~/.cursor/skills/airship-kpi-monitor
-```
-
-Verify:
+The skill ships **with this repo** as a workspace skill at
+`.cursor/skills/airship-kpi-monitor/`. Just clone the repo anywhere and open it in
+Cursor — the skill is then auto-discovered (no `~/.cursor/skills` install):
 
 ```bash
-ls ~/.cursor/skills/airship-kpi-monitor/SKILL.md
+git clone https://github.com/thomasfaro/airship-kpi-monitor
+# then: open the airship-kpi-monitor folder as your workspace in Cursor
 ```
+
+Verify (from the repo root):
+
+```bash
+ls .cursor/skills/airship-kpi-monitor/SKILL.md
+```
+
+The repo also bundles a session-start hook (`.cursor/hooks/update-skill.sh`) that
+runs `git pull --ff-only` so the skill stays up to date automatically.
 
 ### 1.2 Enable the Slack MCP plugin
 
@@ -190,7 +195,12 @@ email-only projects with no mobile device base, a false negative).
 > requirement. It produces the same `mcp.json` entries as 1.5, just in bulk.
 
 The repo ships an optional helper, `scripts/generate_mcp_config.py`, that writes
-Airship MCP entries into `~/.cursor/mcp.json` from a local secrets file.
+Airship MCP entries into `~/.cursor/mcp.json` from a local secrets file. Run all
+commands below **from the skill directory**:
+
+```bash
+cd .cursor/skills/airship-kpi-monitor
+```
 
 1. Copy the template (the copy is gitignored — it holds secrets):
 
@@ -246,7 +256,8 @@ Optional:
 
 `clients.yml` is your own **local, gitignored** registry — the repo never ships
 or commits it. On first setup, create it yourself in the skill folder
-(`~/.cursor/skills/airship-kpi-monitor/clients.yml`) with the template below.
+(`<workspace>/.cursor/skills/airship-kpi-monitor/clients.yml`) with the template
+below.
 It is a **non-secret** registry that lets you run the skill for several clients
 from a single Cursor chat message. Each TAM maintains their own version
 locally — **client data never goes to git**.
@@ -372,7 +383,9 @@ Full list of available threshold keys: see `SKILL.md → Default thresholds`.
 All TAMs share the same skill from the GitHub repo. To update the logic or
 default thresholds:
 
-1. Edit `SKILL.md` in the repo
+1. Edit `.cursor/skills/airship-kpi-monitor/SKILL.md` in the repo
 2. Commit and push
-3. Each TAM runs `git pull` in `~/.cursor/skills/airship-kpi-monitor` to get
-   the latest version
+3. Each TAM gets the new version on their next `git pull` of the repo. The
+   bundled session-start hook (`.cursor/hooks/update-skill.sh`) does this
+   automatically with `git pull --ff-only`; the update is picked up on the next
+   run (reload the window if the skill list is cached).

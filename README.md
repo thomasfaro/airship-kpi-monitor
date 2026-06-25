@@ -60,13 +60,17 @@ and reads the D-7 value from it on the next run.
 
 ## Automated setup (agent-guided) — recommended
 
-The fastest way to install and configure everything is to let the Cursor agent
-do it for you. In a Cursor chat, paste:
+This is a **workspace skill**: clone the repo, open it in Cursor, and the skill
+at `.cursor/skills/airship-kpi-monitor/` is auto-discovered — no
+`~/.cursor/skills` install. A bundled session-start hook
+(`.cursor/hooks/update-skill.sh`) keeps it up to date with `git pull --ff-only`.
+
+The fastest way to configure everything is to let the Cursor agent do it for you.
+With the repo open in Cursor, paste in chat:
 
 ```
-Clone https://github.com/thomasfaro/airship-kpi-monitor into
-~/.cursor/skills/airship-kpi-monitor and follow its SETUP.md to install and
-configure the skill locally. Ask me for the values you need.
+Follow .cursor/skills/airship-kpi-monitor/SETUP.md to configure this skill
+locally (Airship MCP servers + my clients.yml). Ask me for the values you need.
 ```
 
 The agent reads [SETUP.md](SETUP.md) and walks you through it interactively: it
@@ -84,25 +88,23 @@ repo, `clients.yml`, or the canvas.
 
 ## Manual installation (alternative)
 
-Prefer to do it by hand? Clone the skill:
+Prefer to do it by hand? Clone the repo and open it in Cursor:
 
 ```bash
-git clone https://github.com/thomasfaro/airship-kpi-monitor \
-  ~/.cursor/skills/airship-kpi-monitor
+git clone https://github.com/thomasfaro/airship-kpi-monitor
+# open the airship-kpi-monitor folder as your workspace in Cursor
 ```
 
-To update later:
-
-```bash
-cd ~/.cursor/skills/airship-kpi-monitor && git pull
-```
+The skill lives in the repo at `.cursor/skills/airship-kpi-monitor/`, so it is
+available as soon as the workspace is open. To update later, just `git pull` the
+repo (the bundled session-start hook does this automatically).
 
 Create your own **local, gitignored** `clients.yml` in the skill folder (it
 stays on your machine and is never pushed — see the template in the "Client
 registry" section below):
 
 ```bash
-cd ~/.cursor/skills/airship-kpi-monitor
+cd .cursor/skills/airship-kpi-monitor
 $EDITOR clients.yml   # create it with the template below
 ```
 
@@ -142,7 +144,7 @@ local MCP servers.
 ## Client registry — local `clients.yml`
 
 `clients.yml` is **local and gitignored** — the repo never ships or commits it.
-Create your own in the skill folder (`~/.cursor/skills/airship-kpi-monitor/`)
+Create your own in the skill folder (`.cursor/skills/airship-kpi-monitor/`)
 using the template below and keep your own clients there. The agent reads your
 local `clients.yml` and runs the full workflow once per selected client,
 sequentially. Your client list never leaves your machine — the repo only
@@ -244,8 +246,9 @@ Minimum volumes (thresholds skipped if previous window is below these):
 
 ## Changing default thresholds globally
 
-Edit `SKILL.md` under `Default thresholds`, commit and push. Anyone who pulls
-the latest version picks up the new defaults on their next run.
+Edit `.cursor/skills/airship-kpi-monitor/SKILL.md` under `Default thresholds`,
+commit and push. Anyone who pulls the repo (the bundled session-start hook pulls
+automatically) picks up the new defaults on their next run.
 
 ---
 
@@ -253,18 +256,28 @@ the latest version picks up the new defaults on their next run.
 
 ```
 airship-kpi-monitor/
-├── SKILL.md                     ← core logic (read by Cursor agents)
+├── .cursor/
+│   ├── hooks.json                       ← registers the auto-update hook
+│   ├── hooks/
+│   │   └── update-skill.sh              ← session-start: git pull --ff-only
+│   └── skills/
+│       └── airship-kpi-monitor/
+│           ├── SKILL.md                 ← core logic (read by Cursor agents)
+│           ├── clients.secrets.example.yml  ← template for the optional MCP generator
+│           └── scripts/
+│               └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
 ├── SETUP.md                     ← agent-guided installer playbook
-├── clients.secrets.example.yml  ← template for the optional MCP generator
-├── scripts/
-│   └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
 ├── MODOP.md                     ← manual step-by-step setup guide for TAMs
 ├── AGENTS.md                    ← architecture notes for coding agents
 └── README.md                    ← this file
 ```
 
-`clients.yml` is **not** in the repo — it is created locally by each TAM and is
-gitignored (it holds your client routing, never committed).
+The skill is a **workspace skill** under `.cursor/skills/` — cloning + opening
+the repo in Cursor makes it available, with no `~/.cursor/skills` install.
+
+`clients.yml` is **not** in the repo — it is created locally by each TAM (in
+`.cursor/skills/airship-kpi-monitor/`) and is gitignored (it holds your client
+routing, never committed).
 
 ---
 

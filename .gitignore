@@ -1,7 +1,9 @@
 # Local-only files — never commit credentials, client data, or machine config.
 
 # Each TAM's own client list — created locally, never committed.
+# Matches at any depth; the explicit path documents where it now lives.
 clients.yml
+/.cursor/skills/airship-kpi-monitor/clients.yml
 
 # Optional bulk-generator secrets (OAuth creds + local airship-mcp path).
 clients.secrets.yml

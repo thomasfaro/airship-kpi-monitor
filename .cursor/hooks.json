@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": ".cursor/hooks/update-skill.sh", "timeout": 20 }
+    ]
+  }
+}

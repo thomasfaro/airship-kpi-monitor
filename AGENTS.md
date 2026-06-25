@@ -5,14 +5,20 @@
 ### What this repo is
 
 `airship-kpi-monitor` is a **documentation-first Cursor Skill**, not a
-conventional software project. The deliverable is a small set of Markdown files
-plus a client registry:
+conventional software project. It is packaged as a **workspace skill**: the skill
+itself lives in the repo at `.cursor/skills/airship-kpi-monitor/`, so cloning and
+opening the repo in Cursor makes it available with no `~/.cursor/skills` install.
+A session-start hook (`.cursor/hooks.json` → `.cursor/hooks/update-skill.sh`)
+runs `git pull --ff-only` to keep the skill current. The deliverable is a small
+set of Markdown files plus a client registry:
 
-- `SKILL.md` — the core logic/playbook read by the Cursor agent at runtime.
-- `SETUP.md` — agent-executable installer playbook. When a user asks to
-  "install/setup this skill", read it and perform the steps: clone the skill,
-  collect each client's inputs via the question tool, edit `~/.cursor/mcp.json`
-  (creds — backed up first), create the local `clients.yml`, and smoke-test. It
+- `.cursor/skills/airship-kpi-monitor/SKILL.md` — the core logic/playbook read by
+  the Cursor agent at runtime.
+- `SETUP.md` — agent-executable installer playbook (at repo root). When a user
+  asks to "setup this skill", read it and perform the steps: the skill is already
+  present in the workspace, so just collect each client's inputs via the question
+  tool, edit `~/.cursor/mcp.json` (creds — backed up first), create the local
+  `clients.yml`, and smoke-test. It
   also specs a **local-only, secret-free monitoring canvas**
  (`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`, never
  committed). It tracks setup progress, then the skill rewrites it as a run
@@ -21,18 +27,18 @@ plus a client registry:
  or the canvas.
 - `MODOP.md` — manual step-by-step setup guide for TAMs (fallback for SETUP.md).
 - `README.md` — product overview.
-- `clients.yml` — **non-secret** client registry. It is **local + gitignored**:
-  the repo never ships or commits it. Each TAM creates their own (template lives
-  in `MODOP.md` §2.2 / `SETUP.md`) and fills in their own clients. No real client
-  data is ever committed.
+- `.cursor/skills/airship-kpi-monitor/clients.yml` — **non-secret** client
+  registry. It is **local + gitignored**: the repo never ships or commits it. Each
+  TAM creates their own (template lives in `MODOP.md` §2.2 / `SETUP.md`) and fills
+  in their own clients. No real client data is ever committed.
 
 The only executable code is **one optional helper**:
-`scripts/generate_mcp_config.py`. It is a convenience for bulk-creating Airship
-MCP entries in `~/.cursor/mcp.json` from a gitignored `clients.secrets.yml`
-(template: `clients.secrets.example.yml`). It is **not** required to run the
-skill — teammates who configure their MCP servers manually in Cursor ignore it.
-There is otherwise no package manager, lockfile, or build/test/lint tooling, and
-the update script is intentionally a no-op.
+`.cursor/skills/airship-kpi-monitor/scripts/generate_mcp_config.py`. It is a
+convenience for bulk-creating Airship MCP entries in `~/.cursor/mcp.json` from a
+gitignored `clients.secrets.yml` (template: `clients.secrets.example.yml`,
+alongside the script). It is **not** required to run the skill — teammates who
+configure their MCP servers manually in Cursor ignore it. There is otherwise no
+package manager, lockfile, or build/test/lint tooling.
 
 ### How the "application" runs
 
@@ -99,5 +105,11 @@ Cursor agents — neither can be provisioned from this VM via shell:
   call call_airship_api: GET /api/reports/opens` (expect `status_code: 200`).
   Prefer `opens` over `devices` — `devices` can `404` on email-only projects
   (no mobile device base), a false negative.
-- Changing default thresholds globally = edit `SKILL.md`, commit, push;
-  live automations pick up the new version on their next run.
+- The skill is a **workspace skill** under `.cursor/skills/airship-kpi-monitor/`;
+  edits to `SKILL.md` there are versioned with the repo. The `.cursor/hooks/`
+  auto-update hook (`git pull --ff-only` on session start) is fail-open and never
+  touches the gitignored `clients.yml`.
+- Changing default thresholds globally = edit
+  `.cursor/skills/airship-kpi-monitor/SKILL.md`, commit, push; teammates pick up
+  the new version on their next pull (the hook pulls automatically), applied on
+  their next run.

@@ -10,7 +10,11 @@
 
 ## What you will set up
 
-- The skill itself, cloned to `~/.cursor/skills/airship-kpi-monitor`.
+The skill ships **with this repo** as a workspace skill at
+`.cursor/skills/airship-kpi-monitor/` — cloning and opening the repo in Cursor is
+all it takes to make it available (no `~/.cursor/skills` install). So setup is
+only about credentials and routing:
+
 - One **Airship MCP server per client** in `~/.cursor/mcp.json` (holds the OAuth
   credentials — local only).
 - The teammate's local **`clients.yml`** registry (non-secret routing).
@@ -52,17 +56,20 @@ project — see [MODOP.md](MODOP.md) §1.4 if the user needs to create them.
 
 ## Procedure
 
-### Step 0 — Locate or install the skill
+### Step 0 — Locate the skill (already in the workspace)
 
-- If `~/.cursor/skills/airship-kpi-monitor/SKILL.md` exists, run `git -C
-  ~/.cursor/skills/airship-kpi-monitor pull --ff-only` to update it.
-- Otherwise clone it:
-  ```bash
-  git clone https://github.com/thomasfaro/airship-kpi-monitor \
-    ~/.cursor/skills/airship-kpi-monitor
-  ```
-- Treat `~/.cursor/skills/airship-kpi-monitor` as the **skill directory** for the
-  rest of this playbook.
+The skill is a **workspace skill** that lives in this repo at
+`.cursor/skills/airship-kpi-monitor/`. If the user has this repo cloned and open
+in Cursor, the skill is already available — nothing to install.
+
+- Confirm `.cursor/skills/airship-kpi-monitor/SKILL.md` exists in the workspace.
+  If not, the user has not cloned/opened the repo — point them to
+  [README.md](README.md) and pause.
+- Optionally run `git pull --ff-only` to get the latest (the bundled
+  `.cursor/hooks/update-skill.sh` hook also does this automatically on session
+  start).
+- Treat `<workspace>/.cursor/skills/airship-kpi-monitor` as the **skill
+  directory** for the rest of this playbook.
 
 ### Step 1 — Check prerequisites
 
@@ -137,8 +144,8 @@ non-secret routing yourself.
    Cursor so the new server turns green.
 
 > **Setting up many clients at once?** Instead of repeating Steps 4–5, point the
-> user to the bulk generator: fill `clients.secrets.yml` (from
-> `clients.secrets.example.yml`) and run
+> user to the bulk generator: from the skill directory, fill `clients.secrets.yml`
+> (from `clients.secrets.example.yml`) and run
 > `uv run --with pyyaml scripts/generate_mcp_config.py`. See [MODOP.md](MODOP.md)
 > §1.6.
 
@@ -179,7 +186,7 @@ the next client (if any).
 
 - Print the two local file locations the user now owns:
   - `~/.cursor/mcp.json` (credentials — local only)
-  - `~/.cursor/skills/airship-kpi-monitor/clients.yml` (routing registry)
+  - `<workspace>/.cursor/skills/airship-kpi-monitor/clients.yml` (routing registry — gitignored)
 - Offer a first run: `Run airship-kpi-monitor for <Client name>.`
 - Remind the user that the **first run returns a canvas ID** — paste it into the
   client's `slack_canvas_id` in `clients.yml` so later runs reuse the same canvas.
@@ -202,7 +209,7 @@ Setup-phase content (before the first run):
 
 1. **Local file locations** panel — the two paths the user fills/owns:
    - `~/.cursor/mcp.json`
-   - `~/.cursor/skills/airship-kpi-monitor/clients.yml`
+   - `<workspace>/.cursor/skills/airship-kpi-monitor/clients.yml`
 2. **Steps checklist** with done / pending status:
    prerequisites · skill installed · clients.yml created · MCP configured ·
    routing entry added · smoke test passed · first run.
