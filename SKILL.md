@@ -1207,7 +1207,8 @@ the data is embedded inline and only reflects this run.
      (`~/.cursor/mcp.json`, `clients.yml`) and the install checklist.
 4. **Never embed secrets** (app keys, client IDs, client secrets). Use only
    names, channels, and canvas IDs from `clients.yml`.
-5. If the canvas tooling is unavailable, skip this step and log a warning — it
+5. **Write all canvas content in English** (labels, alert causes, callouts).
+6. If the canvas tooling is unavailable, skip this step and log a warning — it
    never blocks the Slack alerts or per-project canvases.
 
 ## Output
