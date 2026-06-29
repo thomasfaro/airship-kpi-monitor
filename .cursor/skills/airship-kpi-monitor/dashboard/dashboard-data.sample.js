@@ -58,9 +58,9 @@ window.AIRSHIP_KPI_DATA = {
           alerts: { count: 3, worstSeverity: "danger", mutedCount: 0 },
           // Per-alert detail powers the Mute buttons; severity drives the dots.
           alertsList: [
-            { key: "app_opens_drop_ios", severity: "danger", cause: "No campaign Jun 17–20" },
-            { key: "optin_velocity_drop", severity: "warning", cause: "Lower acquisition week" },
-            { key: "direct_response_low", severity: "warning", cause: "Tracking-health signal — verify deep links" },
+            { key: "app_opens_drop_ios", severity: "danger", openedAt: "2026-06-10", cause: "No campaign Jun 17–20" },
+            { key: "optin_velocity_drop", severity: "warning", openedAt: "2026-06-18", cause: "Lower acquisition week" },
+            { key: "direct_response_low", severity: "warning", openedAt: "2026-06-16", cause: "Tracking-health signal — verify deep links" },
           ],
           // For watch/alert projects, `trend` is an ARRAY → rendered as bullet
           // points (one driver per line). For stable projects use a plain string.
@@ -94,11 +94,11 @@ window.AIRSHIP_KPI_DATA = {
           // 1 active alert + 1 muted false positive (excluded from worstSeverity).
           alerts: { count: 1, worstSeverity: "warning", mutedCount: 1 },
           alertsList: [
-            { key: "email_delay_high:2026-06-23", severity: "warning", cause: "Peak 38.9% at 10:00 local" },
-            { key: "push_sends_drop_android", severity: "info", muted: true, reason: "Campaign-timing artifact, expected" },
+            { key: "email_delay_high", severity: "warning", openedAt: "2026-06-23", cause: "1 day confirmed (Jun 23), peak 38.9% at 10:00 local — one alert per project; per-day detail in Email health history" },
+            { key: "push_sends_drop_android", severity: "info", muted: true, openedAt: "2026-06-20", reason: "Campaign-timing artifact, expected" },
           ],
           trend: [
-            "Email delay 8.3% on Jun 23 (peak 38.9% at 10:00 local)",
+            "email_delay_high: 1 confirmed day (Jun 23), peak 38.9% at 10:00 local",
             "Push sends dip muted (false positive — campaign timing)",
           ],
           alertHistory: [2, 2, 2, 2, 1, 2, 2],

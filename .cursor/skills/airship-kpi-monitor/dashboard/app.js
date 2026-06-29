@@ -391,6 +391,75 @@
     return '<svg class="sparkbars" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" aria-hidden="true">' + bars + "</svg>";
   }
 
+  // --- alert age ("how long has this been open") -----------------------------
+  // An alert that was already present at the previous run shows a small age graph
+  // (a horizontal duration bar with weekly ticks) instead of reading like a
+  // brand-new finding. openedAt is the date the alert first fired (for an
+  // aggregated email_delay_high it is the earliest confirmed day still in window).
+  var AGE_MAX_DAYS = 28; // bar saturates at 4 weeks
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function parseDay(s) {
+    if (!s) return null;
+    var m = String(s).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(m)) return null;
+    var d = new Date(m + "T00:00:00");
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function daysBetween(a, b) { return Math.round((b - a) / 86400000); }
+  function fmtDay(d) { return MONTHS[d.getMonth()] + " " + d.getDate(); }
+  // Number of whole days an alert has been open as of the current run.
+  function alertAgeDays(openedAt, runStr) {
+    var o = parseDay(openedAt), now = parseDay(runStr);
+    if (!o || !now) return null;
+    return daysBetween(o, now);
+  }
+  function ageGraph(openedAt, runStr, sev) {
+    var o = parseDay(openedAt), now = parseDay(runStr);
+    if (!o || !now) return "";
+    var days = daysBetween(o, now);
+    if (days < 1) return "";
+    var W = 70, H = 16, pad = 1, inner = W - pad * 2;
+    var frac = Math.min(days, AGE_MAX_DAYS) / AGE_MAX_DAYS;
+    var fillW = Math.max(3, frac * inner);
+    var cls = sev === "danger" ? "age--danger" : sev === "warning" ? "age--warning" : "age--info";
+    var ticks = "";
+    for (var w = 7; w < AGE_MAX_DAYS; w += 7) {
+      var x = pad + (w / AGE_MAX_DAYS) * inner;
+      ticks += '<line class="agebar__tick" x1="' + x.toFixed(1) + '" y1="3" x2="' + x.toFixed(1) + '" y2="13"/>';
+    }
+    var weeks = Math.floor(days / 7);
+    var label = days >= AGE_MAX_DAYS ? AGE_MAX_DAYS + "d+" : (weeks >= 2 ? weeks + "w" : days + "d");
+    var title = "Open since " + fmtDay(o) + " \u00B7 " + days + " day" + (days > 1 ? "s" : "") +
+      " (already present at previous run" + (days >= 14 ? "s" : "") + ")";
+    return (
+      '<span class="age ' + cls + '" title="' + esc(title) + '">' +
+        '<svg class="agebar" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" aria-hidden="true">' +
+          '<line class="agebar__track" x1="' + pad + '" y1="8" x2="' + (W - pad) + '" y2="8"/>' +
+          ticks +
+          '<rect class="agebar__fill" x="' + pad + '" y="5" width="' + fillW.toFixed(1) + '" height="6" rx="3"/>' +
+        "</svg>" +
+        '<span class="age__txt">' + esc(label) + "</span>" +
+      "</span>"
+    );
+  }
+  function newChip() {
+    return '<span class="age age--new" title="New this run \u2014 not present at the previous run">\uD83C\uDD95 new</span>';
+  }
+  // Returns the age affordance for an alert.
+  // Always returns at least an empty <span class="age"> so that subgrid column 4
+  // is always occupied — this keeps the Mute button in column 5 on every row.
+  function ageAffordance(a, runStr) {
+    var openedAt = a.openedAt || a.opened || null;
+    if (openedAt) {
+      var days = alertAgeDays(openedAt, runStr);
+      if (days != null) {
+        if (days >= 1) return ageGraph(openedAt, runStr, a.severity || "info");
+        return newChip();
+      }
+    }
+    return '<span class="age"></span>';
+  }
+
   // --- stats -----------------------------------------------------------------
   function computeStats(data) {
     var clients = data.clients || [];
@@ -563,8 +632,9 @@
     }, 0);
   }
 
-  // Per-alert detail with a Mute / Unmute action on each key.
-  function alertsDetail(project, list) {
+  // Per-alert detail with a Mute / Unmute action on each key. `runStr` is the
+  // current run timestamp, used to graph how long each alert has been open.
+  function alertsDetail(project, list, runStr) {
     if (!list || !list.length) return "";
     var items = list
       .map(function (a) {
@@ -574,6 +644,7 @@
           ? '<span class="mutedpill">\uD83D\uDD15 Muted</span>'
           : '<span class="dot dot--' + sev + '" title="' + esc(SEV[sev].label) + '"></span>';
         var reason = muted && a.reason ? '<span class="alert__reason">' + esc(a.reason) + "</span>" : "";
+        var age = ageAffordance(a, runStr);
         var btn =
           '<button class="mutebtn' + (muted ? " mutebtn--unmute" : "") + '" type="button"' +
           ' data-action="' + (muted ? "unmute" : "mute") + '"' +
@@ -586,6 +657,7 @@
             '<code class="alert__key">' + esc(a.key) + "</code>" +
             (a.cause && !muted ? '<span class="alert__cause">' + esc(a.cause) + "</span>" : "") +
             reason +
+            age +
             btn +
           "</li>"
         );
@@ -610,7 +682,7 @@
     }
 
     var alertsHtml = pa.list && pa.list.length
-      ? alertsDetail(p.name, pa.list)
+      ? alertsDetail(p.name, pa.list, data.generatedAt)
       : '<div class="proj__empty">\u2713 No open alerts</div>';
     var spark = barSparkline(p.alertHistory, sev);
     var canvas = p.canvasId

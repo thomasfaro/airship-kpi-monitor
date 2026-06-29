@@ -227,9 +227,11 @@ muted_alerts:
 ```
 
 **Matching.** A `muted_alerts` entry mutes a triggered alert when
-`alert_key == entry.key` **OR** `alert_key.split(":")[0] == entry.key`. So
-`email_delay_high` mutes every dated `email_delay_high:{date}`, while
-`custom_event_rise:purchase` mutes only that one event.
+`alert_key == entry.key` **OR** `alert_key.split(":")[0] == entry.key`. Email
+health alerts (`email_delay_high`, `email_spam_complaint_high`) are a single key
+per project, so muting one mutes that whole channel-issue for the project. The
+family form still applies to keyed events, e.g. `custom_event_rise:purchase`
+mutes only that one event while `custom_event_rise` mutes every custom-event rise.
 
 ### Three ways to declare a mute (all converge on `clients.yml`)
 
@@ -534,16 +536,27 @@ delay_consecutive_hours[D] = max consecutive run length where delay_rate_h > ema
 delay_confirmed[D]         = delay_consecutive_hours[D] >= email_delay_min_consecutive_hours
 ```
 
-Only days where `delay_confirmed[D] = true` will fire an `email_delay_high:{D}` alert
-in Step 8. Days that pass the daily screen but fail the hourly confirmation are
-**logged** in the canvas email health table (with their actual delay rate) but do
-**not** fire an alert.
+Collect every confirmed day into a single set:
 
-### Step 3c — Email delay drill-down (only when `email_delay_high:{date}` fires)
+```
+confirmed_delay_days = [ D for D in current_window if delay_confirmed[D] = true ]
+```
 
-Run this step **only** when at least one `email_delay_high:{date}` alert is in the
-**alerts to post** list (new alert — not ongoing, not resolution). For each impacted
-date `D`:
+**One alert per project per issue type.** Do **not** emit one alert per day. If
+`confirmed_delay_days` is non-empty, a **single** `email_delay_high` alert fires
+for the project (Step 8), and its cause aggregates all confirmed days (count,
+date range, peak rate + date). Days that pass the daily screen but fail the
+hourly confirmation are **logged** in the canvas email health table (with their
+actual delay rate) but do **not** contribute to the alert. The per-day detail
+always remains visible in the `## 📧 Email deliverability health — history` table;
+the Open Alerts list keeps just the one rolled-up row.
+
+### Step 3c — Email delay drill-down (only when `email_delay_high` is a new alert)
+
+Run this step **only** when the single `email_delay_high` alert is in the
+**alerts to post** list (new alert — not ongoing, not resolution). Run the
+drill-down for each day in `confirmed_delay_days` (typically focus on the
+**peak** day for the Slack narrative; list the others compactly).
 
 **The hourly breakdown was already fetched in Step 3b.5** (`delay_hourly_breakdown[D]`).
 Do **not** re-fetch it. Proceed directly to Step 3c.2 (campaign correlation).
@@ -910,8 +923,8 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `email_open_rate_drop` | open_rate_drop_pts ≥ email_open_rate_drop_pts |
 | `email_bounce_high` | email_bounce_rate_current > email_bounce_max |
 | `email_unsubscribe_rise` | unsubscribe_delta_pct ≥ email_unsubscribe_rise_pct |
-| `email_spam_complaint_high:{date}` | spam_complaint_rate_{date} > email_spam_complaint_rate_max (if delivery_{date} ≥ min_email_delivery_day) |
-| `email_delay_high:{date}` | delay_rate_{date} > email_delay_rate_max (daily pre-filter, same volume guard) **AND** delay_confirmed[date] = true (i.e. ≥ email_delay_min_consecutive_hours consecutive hours above threshold from Step 3b.5) |
+| `email_spam_complaint_high` | spam_complaint_rate_{date} > email_spam_complaint_rate_max on **≥ 1 day** in the current window (each day guarded by delivery_{date} ≥ min_email_delivery_day). One alert per project; cause aggregates the affected days. |
+| `email_delay_high` | delay_rate_{date} > email_delay_rate_max (daily pre-filter, same volume guard) **AND** delay_confirmed[date] = true (≥ email_delay_min_consecutive_hours consecutive hours, Step 3b.5) on **≥ 1 day** in the current window. **One alert per project** — never one per day; cause aggregates all confirmed days (count, range, peak rate + date). |
 | `web_sends_drop` | web_sends_delta_pct ≤ -web_sends_drop_pct (if web active) |
 | `web_sends_rise` | web_sends_delta_pct ≥ web_sends_rise_pct (if web active) |
 | `sms_sends_drop` | sms_sends_delta_pct ≤ -sms_sends_drop_pct (if SMS active) |
@@ -927,8 +940,11 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `custom_event_rise:{name}` | count delta ≥ custom_event_rise_pct |
 | `custom_event_drop:{name}` | count delta ≤ -custom_event_drop_pct |
 
-Dated email health keys (e.g. `email_spam_complaint_high:2026-06-23`) resolve
-when that day's rate falls back below threshold on a later run.
+Email health keys (`email_delay_high`, `email_spam_complaint_high`) are
+**one per project, not per day**. They stay open (ongoing) while **any** day in
+the current window still breaches, and **resolve** only when **no** day in the
+current window breaches on a later run. The list of affected days lives in the
+alert cause and in the canvas email-health history table, not as separate alerts.
 
 Do **not** evaluate a threshold if the relevant previous-window volume is
 below the minimum defined in `min_*` settings (per OS where the minimum is
@@ -956,15 +972,17 @@ this project, plus any `Muted` row reasons read from the canvas in Step 7.
 These reasons are TAM-authored domain knowledge about what is normal or
 expected for this client — use them to add intelligence to the current analysis:
 
-1. **Same family, different instance** — if the new alert shares a key family
-   with a muted entry but is a *different* dated/named instance (so it is **not**
-   itself muted), treat the muted reason as a strong prior. Example: `email_delay_high:2026-07-04`
-   fires while `email_delay_high:2026-06-20` is muted with reason "expected delay
-   profile of high-volume blasts" → check whether the new date is **also** a
-   high-volume blast day (Step 3c). If yes, lead `possible_cause` with that
-   pattern: `"Consistent with a previously-confirmed false-positive pattern for
-   this client (muted {muted_key}: '{reason}'). Jul 4 is also a ~{sends} blast day
-   → likely the same expected transient delay. Source: Step 3c + clients.yml mute history."`
+1. **Recurrence of a previously-muted pattern** — if the new alert shares a key
+   with a muted entry's family/name but represents a *new occurrence* (e.g. the
+   project's `email_delay_high` resolved earlier and now fires again on fresh
+   days, or a `custom_event_rise:{name}` recurs), treat the muted reason as a
+   strong prior. Example: `email_delay_high` fires on new days while a prior mute
+   reason said "expected delay profile of high-volume blasts" → check whether the
+   newly-confirmed days are **also** high-volume blast days (Step 3c). If yes,
+   lead `possible_cause` with that pattern: `"Consistent with a previously-noted
+   false-positive pattern for this client (mute reason: '{reason}'). The confirmed
+   days are also ~{sends} blast days → likely the same expected transient delay.
+   Source: Step 3c + clients.yml mute history."`
 2. **Related metric, same root cause** — if a muted reason names a recurring
    cause (e.g. "irregular SMS activity is normal for them", "campaign-timing
    artifact from monthly blast") and the new alert is mechanically tied to that
@@ -998,8 +1016,8 @@ Check whether the alert is mechanically explained by another metric on the
 | `optins_drop_{os}` | If push_sends_{os} or app_opens_{os} also dropped → acquisition slowed alongside lower activity on {os}. Cite /api/reports/optins. |
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
-| `email_spam_complaint_high:{date}` | High spam rate on {date} — check if a specific campaign sent that day had list-quality or consent issues. Cite spam_complaint / delivery from /api/reports/events (DAILY). |
-| `email_delay_high:{date}` | Run **Step 3c** first. High delay rate on {date} — correlate hourly delay peaks with large email blasts (`responses/list` + `events/summary/perpush`). Provider throttling/reputation if no large campaign matches. |
+| `email_spam_complaint_high` | High spam rate on one or more days — check whether the affected day(s)' campaigns had list-quality or consent issues. Cite spam_complaint / delivery per affected day from /api/reports/events (DAILY). Aggregate the affected days in the cause. |
+| `email_delay_high` | Run **Step 3c** first (for each confirmed day, focus narrative on the peak day). Correlate hourly delay peaks with large email blasts (`responses/list` + `events/summary/perpush`). Provider throttling/reputation if no large campaign matches. Cause aggregates all confirmed days (count, range, peak rate + date). |
 | `web_sends_drop` | If push_sends also dropped → note correlation; if push stable → flag as specific to web channel. Check if web.unique_devices also dropped (source: /api/reports/devices). |
 | `sms_sends_drop` | Check day-by-day series for gaps (no sends on a given day = no campaign). If sms.unique_devices also dropped → audience erosion. Source: /api/reports/sends field "sms". |
 | `sms_sends_rise` | Unexpected spike — check day-by-day for concentration on a single day (bulk campaign or test blast). Source: /api/reports/sends field "sms". |
@@ -1188,11 +1206,13 @@ cause line at the bottom of the message. If no cause was identified, write:
   date, raw counts (`delay` / `delivery`), and source `/api/reports/events`
   (DAILY).
 
-  **When `email_delay_high:{date}` is a new alert**, append the Step 3c drill-down
-  **below** the `possible_cause` line (mandatory):
+  **When `email_delay_high` is a new alert**, append the Step 3c drill-down
+  **below** the `possible_cause` line (mandatory). Lead with the **peak confirmed
+  day**; if several days are confirmed, list the others compactly (date · delay %)
+  under the table rather than repeating a full breakdown per day:
 
   ```
-  **Hourly breakdown — {date}** _(source: /api/reports/events · HOURLY; hours in local {time_zone})_
+  **Hourly breakdown — {peak_date}** _(source: /api/reports/events · HOURLY; hours in local {time_zone})_
   | Hour (local · {time_zone}) | Email sends | Injection | Delivered | Delay | Delay % |
   |---|---:|---:|---:|---:|---:|
   | 07:00 | … | … | … | … | … % |
@@ -1286,6 +1306,7 @@ _Last run: {today} · Window {current_window_start}→{current_window_end} vs {p
 |---|---|---|---|---|---|
 | push_sends_drop_ios | iOS | 2026-06-15 | 2026-06-22 | Active | No campaign Jun 17 |
 | push_sends_drop_android | Android | 2026-06-15 | 2026-06-22 | 🔕 Muted | Campaign-timing artifact (false positive) |
+| email_delay_high | — | 2026-06-22 | 2026-06-28 | Active | 6 days confirmed (Jun 22–28), peak 98.5% on Jun 22 — Jun 20–21 bulk backlog + Jun 26 blast throttling (one alert per project; per-day detail in Email health history) |
 
 _(No open alerts → write "No open alerts this week.")_
 _(**Status**: `Active` or `🔕 Muted`. A TAM can mute a false positive by setting
@@ -1507,8 +1528,10 @@ file:
          { name: "<project>", channel: "<slack_channel>", canvasId: "<slack_canvas_id>",
            lastRun: "<run_timestamp>",
            alerts: { count: <active count>, worstSeverity: "danger|warning|info|null", mutedCount: <n> },
-           // Optional per-alert detail — enables the dashboard Mute/Unmute buttons.
+           // Optional per-alert detail — enables the dashboard Mute/Unmute buttons
+           // and the per-alert age graph (openedAt).
            alertsList: [ { key: "<alert_key>", severity: "danger|warning|info",
+                          openedAt: "<YYYY-MM-DD first-seen date>",
                           cause: "<short cause>", muted: <true|false>, reason: "<why muted, if muted>" }, … ],
            trend: <"string" | ["bullet", "bullet", …]>, alertHistory: [ <n>, … ] }  // newest last
        ] }
@@ -1530,6 +1553,16 @@ file:
      flag (+ `reason` when muted). The dashboard renders a per-alert Mute button
      (or Unmute + a "Muted" pill for already-muted ones). Muted entries are
      de-emphasised and excluded from `worstSeverity`.
+   - **`openedAt`** (recommended): the date the alert **first fired** — read it
+     from the `Opened` column of the per-project canvas Open Alerts table
+     (Step 11). For an **aggregated** `email_delay_high` / `email_spam_complaint_high`
+     (one per project), use the **earliest confirmed day still in the current
+     window**. The dashboard uses `openedAt` to draw a small **age graph** (a
+     horizontal duration bar) on any alert that was already present at the
+     previous run — so ongoing issues read as "open for N days" rather than
+     looking brand-new — and a `🆕 new` chip when the alert first fired this run
+     (`openedAt` == this run's date). Omit `openedAt` only when you cannot
+     determine it; the dashboard then shows no age graph.
    - **`trend` format:** for projects in **watch or alert** (`worstSeverity`
      `warning` or `danger`), write `trend` as an **array of short bullet
      strings** — one driver per line (e.g. each impacted metric, the cause, the
