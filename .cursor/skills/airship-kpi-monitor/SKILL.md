@@ -269,6 +269,24 @@ the canvas with `last_seen` updated and `Status = Muted`. Muted alerts are
 excluded from any "worst severity" used to summarise active alerts, but remain
 visible everywhere with their reason.
 
+### Mute reasons as accumulated intelligence (later analyses)
+
+A mute `reason` is **more than a label** — it is TAM-authored domain knowledge
+about what is normal/expected for that client. On every subsequent run the agent
+**reads these reasons as a prior** when analysing *non-muted* alerts (see
+**Step 8b check 0**):
+- a **new** alert in the same key family as a muted one inherits the muted
+  reason as a strong hypothesis (e.g. a new high-volume-blast delay day is
+  recognised as the same expected pattern), producing a smarter `possible_cause`;
+- a muted "watch only" metric that **worsens materially** vs when it was muted is
+  flagged in the canvas/dashboard trend so a human can decide to unmute (the
+  alert itself still never auto-posts).
+
+This makes the mute history compound over time: the more a TAM annotates false
+positives, the more context the agent carries into future runs. Reasons are still
+**never** used to auto-mute a different key, nor to change thresholds — they only
+enrich the analysis and the surfaced narrative.
+
 ## Editing thresholds (per project)
 
 Default thresholds live in **Step 8**. A TAM can override any of them **per
@@ -331,8 +349,8 @@ denominator used.**
 | Time in app (per OS) | `/api/reports/timeinapp` | avg value/day returned by Airship |
 | Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
 | Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
-| Email delay / spam complaint (daily) | `/api/reports/events` | `delay` or `spam_complaint` / `delivery` per day (`precision=DAILY`, one call per day) |
-| Email delay drill-down (on alert) | `/api/reports/events`, `/api/reports/sends` | hourly `delay` / `delivery` + `email` sends (`precision=HOURLY`, one events call per hour) |
+| Email delay / spam complaint (daily pre-filter) | `/api/reports/events` | `delay` or `spam_complaint` / `delivery` per day (`precision=DAILY`, one call per day) |
+| Email delay hourly confirmation (candidate days) | `/api/reports/events`, `/api/reports/sends` | hourly `delay` / `delivery` per hour + `email` sends (`precision=HOURLY`, one events call per hour, 24 calls per candidate day) — confirms ≥ N consecutive hours above threshold before alerting |
 | Email campaigns (delay root cause) | `/api/reports/responses/list`, `/api/reports/events/summary/perpush/{push_id}`, `/api/reports/perpush/pushbody/{push_id}` | top sends on impacted day; per-push `delay`/`delivery`; `message_name` only |
 | SMS sends | `/api/reports/sends` | raw count (field `sms`) |
 | SMS delivery rate | `/api/reports/events` | `delivered` / `dispatched` SMS delivery report events |
@@ -476,43 +494,68 @@ Only run this step if the project sent email in the current window
 (`email_sends_current > 0` from Step 1, or `injection` > 0 in Step 2).
 If no email activity, omit email health KPIs and canvas sections.
 
+### Step 3b.5 — Hourly confirmation for candidate delay days
+
+The daily rate (Step 3b) is a **pre-filter only**. A day where
+`delay_rate_{d} > email_delay_rate_max` is a **candidate**. Before it can fire
+an alert it must be confirmed at the hourly level: the high-rate periods must
+span at least `email_delay_min_consecutive_hours` consecutive hours.
+
+For each candidate day `D` (i.e. `delay_rate_{D} > email_delay_rate_max` AND
+`delivery_{D} >= min_email_delivery_day`), fetch the hourly breakdown:
+
+```
+GET /api/reports/events
+  params: start={D}T{h}:00:00, end={D}T{h}:59:59, precision=HOURLY, page_size=100
+→ for h in 0..23
+→ extract delay_{h}, delivery_{h} (location=custom)
+→ skip hour if delivery_{h} < min_email_delivery_day
+→ delay_rate_h = delay_{h} / delivery_{h} * 100
+```
+
+Also fetch hourly email send volume for day D (needed for Step 3c correlation):
+
+```
+GET /api/reports/sends
+  params: start={D}T00:00:00, end={D}T23:59:59, precision=HOURLY
+→ field email per row
+```
+
+Store as `delay_hourly_breakdown[D]` (used later in Step 3c without re-fetching).
+
+**Consecutive-hour count**: scan hours 0–23 in order. Count the **longest run**
+of consecutive hours where `delay_rate_h > email_delay_rate_max` (ignoring
+low-volume hours that were skipped — do **not** break a consecutive run on a
+skipped hour; treat them as gap-neutral so a brief low-volume gap between two
+high-delay hours does not invalidate the sequence).
+
+```
+delay_consecutive_hours[D] = max consecutive run length where delay_rate_h > email_delay_rate_max
+delay_confirmed[D]         = delay_consecutive_hours[D] >= email_delay_min_consecutive_hours
+```
+
+Only days where `delay_confirmed[D] = true` will fire an `email_delay_high:{D}` alert
+in Step 8. Days that pass the daily screen but fail the hourly confirmation are
+**logged** in the canvas email health table (with their actual delay rate) but do
+**not** fire an alert.
+
 ### Step 3c — Email delay drill-down (only when `email_delay_high:{date}` fires)
 
 Run this step **only** when at least one `email_delay_high:{date}` alert is in the
 **alerts to post** list (new alert — not ongoing, not resolution). For each impacted
 date `D`:
 
-#### 3c.1 — Hourly breakdown for day `D`
+**The hourly breakdown was already fetched in Step 3b.5** (`delay_hourly_breakdown[D]`).
+Do **not** re-fetch it. Proceed directly to Step 3c.2 (campaign correlation).
 
-`/api/reports/events` with `precision=HOURLY` over a date range returns **aggregates
-for the whole range**, not per-hour rows. Issue **one call per hour** (same pattern
-as Step 3b):
+#### 3c.1 — Hourly breakdown for day `D` (already available from Step 3b.5)
 
-```
-GET /api/reports/events
-  params: start={D}T{h}:00:00, end={D}T{h}:59:59, precision=HOURLY, page_size=100
-→ for h in 0..23
-```
-
-Also fetch email send volume by hour:
-
-```
-GET /api/reports/sends
-  params: start={D}T00:00:00, end={D}T23:59:59, precision=HOURLY
-→ field email per row (date = hour bucket)
-```
-
-Per hour `h`, extract from events (location=`custom`):
-`injection`, `delivery`, `delay`. Compute `delay_rate_h = delay_h / delivery_h * 100`.
-Mark hours with `delivery_h < min_email_delivery_day` as low volume (show counts but
-flag rate as non-significant).
-
-Convert each UTC hour bucket to the project's `time_zone` and keep both. The
-Slack/canvas table shows the **local** hour (labelled `Hour (local · {time_zone})`)
-so peaks read in business hours; keep the UTC hour available for cross-checking
-against `push_time` (also UTC) in Step 3c.3.
-
-Store as `delay_hourly_breakdown[D]` — sorted table used in the Slack alert.
+`delay_hourly_breakdown[D]` was built in Step 3b.5 — do **not** re-fetch. The
+table already has UTC and local hours (converted via `time_zone`), `delay_rate_h`,
+raw counts, and the low-volume flags. Mark hours with
+`delivery_h < min_email_delivery_day` as low volume (show counts but flag rate as
+non-significant). The consecutive-hour window that triggered the alert is already
+known; highlight those hours (⚠️) in the Slack/canvas table.
 
 #### 3c.2 — Correlate with email campaigns sent on day `D`
 
@@ -657,7 +700,8 @@ them as `"n/a (canvas history pending)"` and do not trigger thresholds.
 
 ```yaml
 # App (evaluated PER OS: ios, android)
-app_opens_drop_pct: 20          # drop > 20% → alert
+app_opens_drop_pct: 40          # WoW drop > 40% on that OS → alert
+app_opens_cross_os_gap_pts: 50   # OR |iOS WoW − Android WoW| > 50 pts → alert on BOTH OS
 
 # Engagement / time in app (PER OS)
 timeinapp_drop_pct: 20          # avg time-in-app drop > 20% → alert
@@ -668,7 +712,7 @@ devices_optin_drop_pct: 5       # drop > 5% → alert
 devices_uninstall_rise_pct: 10  # rise > 10% → alert
 
 # Push mobile (evaluated PER OS: ios, android)
-push_sends_drop_pct: 50         # drop > 50% → alert
+push_sends_drop_pct: 100        # drop > 100% (i.e. zero sends) → alert
 optouts_rise_pct: 20            # push opt-out raw count rise > 20% → alert (rate per send also shown)
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 direct_response_collapse_pct: 60 # WoW drop of direct response RATE ≥ 60% on an OS → likely tracking/SDK issue
@@ -678,20 +722,21 @@ optins_drop_pct: 25             # new opt-ins drop > 25% → alert
 # net_optin_negative: alert if net (opt-ins − opt-outs) flips from ≥0 to <0
 
 # Email (channel-level, no OS split)
-email_sends_drop_pct: 20        # drop > 20% → alert
+email_sends_drop_pct: 100       # drop > 100% (i.e. zero sends) → alert
 email_deliverability_min: 95    # rate < 95% → alert (absolute)
 email_open_rate_drop_pts: 5     # drop > 5 percentage points → alert
 email_bounce_max: 2             # rate > 2% → alert (absolute)
 email_unsubscribe_rise_pct: 30  # rise > 30% → alert
 email_spam_complaint_rate_max: 1  # daily spam_complaint / delivery > 1% → alert
-email_delay_rate_max: 10          # daily delay / delivery > 10% → alert
+email_delay_rate_max: 10          # hourly delay / delivery > 10% threshold (per hour)
+email_delay_min_consecutive_hours: 2  # min consecutive hours above threshold to confirm alert
 
 # Web push (only evaluated if web.unique_devices > 0)
-web_sends_drop_pct: 30          # drop > 30% → alert
+web_sends_drop_pct: 100         # drop > 100% (i.e. zero sends) → alert
 web_sends_rise_pct: 100         # rise > 100% → alert (unexpected spike)
 
 # SMS channel (only evaluated if sms.unique_devices > 0 OR sms_sends_prev > 0)
-sms_sends_drop_pct: 30          # WoW drop > 30% → alert
+sms_sends_drop_pct: 100         # WoW drop > 100% (i.e. zero sends) → alert
 sms_sends_rise_pct: 100         # WoW rise > 100% → alert (unexpected spike)
 sms_delivery_rate_min: 85       # delivery rate (delivered/dispatched) < 85% → alert
 sms_delivery_rate_drop_pts: 10  # delivery rate drops > 10 percentage points → alert
@@ -722,6 +767,7 @@ For each `os` in {`ios`, `android`}:
 app_opens_{os}_current   = sum(opens.{os}) over current window
 app_opens_{os}_previous  = sum(opens.{os}) over previous window
 app_opens_{os}_delta_pct = (current - previous) / previous * 100
+app_opens_cross_os_gap_pts = abs(app_opens_ios_delta_pct - app_opens_android_delta_pct)
 # Source: /api/reports/opens
 
 # Push sends
@@ -822,14 +868,16 @@ email_bounce_rate_current    = bounce_current / injection_current * 100
 (repeat for previous window)
 ```
 
-Email deliverability health (daily, from Step 3b — per day in current window):
+Email deliverability health (daily pre-filter from Step 3b, hourly confirmation from Step 3b.5):
 
 ```
 For each date d in [current_window_start, current_window_end]:
-  delay_rate_{d}          = delay_{d} / delivery_{d} * 100
-  spam_complaint_rate_{d} = spam_complaint_{d} / delivery_{d} * 100
-# Source: /api/reports/events (precision=DAILY, one call per day)
-# Denominator: delivery (same day)
+  delay_rate_{d}               = delay_{d} / delivery_{d} * 100        (daily aggregate — pre-filter only)
+  spam_complaint_rate_{d}      = spam_complaint_{d} / delivery_{d} * 100
+  delay_consecutive_hours[d]   = max consecutive run of hours where delay_rate_h > email_delay_rate_max
+  delay_confirmed[d]           = delay_consecutive_hours[d] >= email_delay_min_consecutive_hours
+# Source: /api/reports/events DAILY (one call per day) + HOURLY (one call per hour, only for candidate days)
+# Denominator: delivery (same day / same hour)
 # Skip day if delivery_{d} < min_email_delivery_day
 ```
 
@@ -849,7 +897,7 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 
 | Key | Condition |
 |---|---|
-| `app_opens_drop_{os}` | app_opens_{os}_delta_pct ≤ -app_opens_drop_pct |
+| `app_opens_drop_{os}` | app_opens_{os}_delta_pct ≤ −app_opens_drop_pct **OR** abs(app_opens_ios_delta_pct − app_opens_android_delta_pct) > app_opens_cross_os_gap_pts (when the gap fires, alert **both** iOS and Android) |
 | `timeinapp_drop_{os}` | timeinapp_{os}_delta_pct ≤ -timeinapp_drop_pct |
 | `push_sends_drop_{os}` | push_sends_{os}_delta_pct ≤ -push_sends_drop_pct |
 | `push_optouts_rise_{os}` | push_optouts_{os}_delta_pct ≥ optouts_rise_pct |
@@ -863,7 +911,7 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `email_bounce_high` | email_bounce_rate_current > email_bounce_max |
 | `email_unsubscribe_rise` | unsubscribe_delta_pct ≥ email_unsubscribe_rise_pct |
 | `email_spam_complaint_high:{date}` | spam_complaint_rate_{date} > email_spam_complaint_rate_max (if delivery_{date} ≥ min_email_delivery_day) |
-| `email_delay_high:{date}` | delay_rate_{date} > email_delay_rate_max (same guard) |
+| `email_delay_high:{date}` | delay_rate_{date} > email_delay_rate_max (daily pre-filter, same volume guard) **AND** delay_confirmed[date] = true (i.e. ≥ email_delay_min_consecutive_hours consecutive hours above threshold from Step 3b.5) |
 | `web_sends_drop` | web_sends_delta_pct ≤ -web_sends_drop_pct (if web active) |
 | `web_sends_rise` | web_sends_delta_pct ≥ web_sends_rise_pct (if web active) |
 | `sms_sends_drop` | sms_sends_delta_pct ≤ -sms_sends_drop_pct (if SMS active) |
@@ -900,6 +948,42 @@ the variation. If none applies, output `"No clear cause identified"`.
 Always state the data source for the reasoning (endpoint + denominator) when
 the cause concerns a problem.
 
+#### 0. Known false-positive context (mute reasons as accumulated intelligence)
+
+Before any other check, consult the project's **mute knowledge base** = the
+`reason` (and `muted_since`) of every entry in `clients.yml` `muted_alerts` for
+this project, plus any `Muted` row reasons read from the canvas in Step 7.
+These reasons are TAM-authored domain knowledge about what is normal or
+expected for this client — use them to add intelligence to the current analysis:
+
+1. **Same family, different instance** — if the new alert shares a key family
+   with a muted entry but is a *different* dated/named instance (so it is **not**
+   itself muted), treat the muted reason as a strong prior. Example: `email_delay_high:2026-07-04`
+   fires while `email_delay_high:2026-06-20` is muted with reason "expected delay
+   profile of high-volume blasts" → check whether the new date is **also** a
+   high-volume blast day (Step 3c). If yes, lead `possible_cause` with that
+   pattern: `"Consistent with a previously-confirmed false-positive pattern for
+   this client (muted {muted_key}: '{reason}'). Jul 4 is also a ~{sends} blast day
+   → likely the same expected transient delay. Source: Step 3c + clients.yml mute history."`
+2. **Related metric, same root cause** — if a muted reason names a recurring
+   cause (e.g. "irregular SMS activity is normal for them", "campaign-timing
+   artifact from monthly blast") and the new alert is mechanically tied to that
+   same behaviour, cite it as context so the TAM sees the link rather than
+   re-investigating from scratch.
+3. **Contradiction / escalation** — if a metric was muted as "watch only / let's
+   see if it climbs" and the current value is now **materially worse** than when
+   it was muted, surface that explicitly: `"Note: {key} was muted on {muted_since}
+   with reason '{reason}', but the value has worsened from ~X% to Y% since — worth
+   re-evaluating whether the mute still holds."` (The alert stays muted — never
+   auto-post — but the worsening is flagged in the canvas/dashboard trend so a
+   human can decide to unmute.)
+
+Only use a muted reason when it is *genuinely* relevant to the current breach;
+do not force a connection. When you do, name the muted key and quote its reason
+so the reasoning is auditable. This check produces **context**, not a mute: a
+non-muted new alert still posts to Slack — but with a smarter, history-aware
+`possible_cause`.
+
 #### 1. Cross-metric correlation (per OS)
 
 Check whether the alert is mechanically explained by another metric on the
@@ -907,7 +991,7 @@ Check whether the alert is mechanically explained by another metric on the
 
 | Alert | Correlation check |
 |---|---|
-| `app_opens_drop_{os}` | If push_sends_{os} also dropped proportionally → `"App opens drop on {os} is consistent with the -X% push send reduction on {os} (source: /api/reports/opens vs /api/reports/sends)."` |
+| `app_opens_drop_{os}` | If triggered by cross-OS gap only → `"App opens WoW diverged: iOS {ios_delta}% vs Android {android_delta}% (gap {gap} pts > {threshold} pts threshold) — investigate platform-specific tracking, SDK, or campaign mix (source: /api/reports/opens)."` If push_sends_{os} also dropped proportionally → `"App opens drop on {os} is consistent with the -X% push send reduction on {os} (source: /api/reports/opens vs /api/reports/sends)."` |
 | `timeinapp_drop_{os}` | If app_opens_{os} also dropped → engagement-wide erosion on {os}; if opens stable → deeper in-session disengagement. Cite /api/reports/timeinapp. |
 | `direct_response_collapse_{os}` | **Prioritise tracking hypothesis**: `"Direct response rate on {os} collapsed from X% to Y% (direct / push sends, source /api/reports/responses) while sends stayed normal → most likely an attribution/SDK tracking issue on {os}, not a real engagement drop. Recommend checking SDK version / response tracking on {os}."` |
 | `push_optouts_rise_{os}` (raw) | If push_sends_{os} rose significantly → `"Raw opt-out count increase on {os} is volume-driven (push sends +X%); opt-out rate per send actually improved/worsened (source: /api/reports/optouts ÷ /api/reports/sends)."` |

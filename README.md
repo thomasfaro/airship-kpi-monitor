@@ -224,6 +224,15 @@ A `muted_alerts` key matches an alert exactly, or as a **family** (the part
 before `:`): e.g. `email_delay_high` mutes every dated `email_delay_high:{date}`.
 Muted alerts are excluded from severity counts but keep their reason.
 
+**Mute reasons are accumulated intelligence.** A `reason` is not just a label:
+on later runs the agent reads it as TAM-authored domain knowledge and uses it
+to enrich the analysis of *non-muted* alerts. A new alert in the same key family
+inherits the muted reason as a strong hypothesis (smarter root-cause narrative),
+and a "watch only" metric that worsens materially since it was muted is flagged
+in the trend so you can decide whether to unmute. Reasons never auto-mute a
+different key or change thresholds — they only make future analyses sharper. The
+more you annotate false positives, the more context the agent carries forward.
+
 ## Editing thresholds (per project)
 
 Tune any alert threshold for a single project — no skill edit needed. Overrides
@@ -299,26 +308,28 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `app_opens_drop_pct` | 20 | App opens drop > 20% → alert (per OS) |
+| `app_opens_drop_pct` | 40 | App opens WoW drop > 40% on that OS → alert (per OS) |
+| `app_opens_cross_os_gap_pts` | 50 | **Or** \|iOS WoW − Android WoW\| > 50 pts → alert on **both** OS |
 | `timeinapp_drop_pct` | 20 | Avg time in app drop > 20% → alert (per OS) |
 | `devices_unique_drop_pct` | 5 | Installed base drop > 5% → alert (per OS) |
 | `devices_optin_drop_pct` | 5 | Opted-in drop > 5% → alert (per OS) |
 | `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% → alert (per OS) |
-| `push_sends_drop_pct` | 50 | Push sends drop > 50% → alert (per OS) |
+| `push_sends_drop_pct` | 100 | Push sends drop > 100% (zero sends) → alert (per OS) |
 | `optouts_rise_pct` | 20 | Opt-outs rise > 20% → alert (per OS) |
 | `direct_response_rate_min` | 0.5 | Direct response rate < 0.5% → alert (per OS) |
 | `direct_response_collapse_pct` | 60 | Direct response rate WoW drop ≥ 60% on an OS → likely tracking/SDK issue |
 | `optins_drop_pct` | 25 | New opt-ins drop > 25% → alert (per OS) |
-| `email_sends_drop_pct` | 20 | Email sends drop > 20% → alert |
+| `email_sends_drop_pct` | 100 | Email sends drop > 100% (zero sends) → alert |
 | `email_deliverability_min` | 95 | Deliverability < 95% → alert |
 | `email_open_rate_drop_pts` | 5 | Open rate drop > 5 pts → alert |
 | `email_bounce_max` | 2 | Bounce rate > 2% → alert |
 | `email_unsubscribe_rise_pct` | 30 | Unsubscribes rise > 30% → alert |
 | `email_spam_complaint_rate_max` | 1 | Daily spam complaint rate > 1% of deliveries → alert |
-| `email_delay_rate_max` | 10 | Daily delay rate > 10% of deliveries → alert |
-| `web_sends_drop_pct` | 30 | Web push sends drop > 30% → alert |
+| `email_delay_rate_max` | 10 | Hourly delay / delivery > 10% threshold (used in both pre-filter and per-hour check) |
+| `email_delay_min_consecutive_hours` | 2 | Min consecutive hours above the delay ceiling before `email_delay_high:{date}` fires |
+| `web_sends_drop_pct` | 100 | Web push sends drop > 100% (zero sends) → alert |
 | `web_sends_rise_pct` | 100 | Web push sends rise > 100% → alert (spike) |
-| `sms_sends_drop_pct` | 30 | SMS sends drop > 30% → alert |
+| `sms_sends_drop_pct` | 100 | SMS sends drop > 100% (zero sends) → alert |
 | `sms_sends_rise_pct` | 100 | SMS sends rise > 100% → alert (spike) |
 | `sms_delivery_rate_min` | 85 | SMS delivery rate < 85% → alert |
 | `sms_delivery_rate_drop_pts` | 10 | SMS delivery rate drop > 10 pts → alert |
