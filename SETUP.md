@@ -64,7 +64,20 @@ Use the question tool to gather these. Collect them one client at a time.
 | OAuth client secret | `mcp.json` `AIRSHIP_CLIENT_SECRET` | **secret — mcp.json only** |
 | Slack channel | `clients.yml` `slack_channel` | name without `#`, e.g. `cs-fr-client` |
 | Time zone | `clients.yml` `time_zone` | IANA name, e.g. `Europe/Paris`; defaults to `UTC` |
+| Industry | `clients.yml` `industry` | benchmark vertical; **auto-deduced from brand name** (confirm), editable later in the dashboard |
 | MCP server name | key in `mcp.json`; `clients.yml` `airship_mcp` (with `user-` prefix) | e.g. `CLIENT-A PROD` → `user-CLIENT-A PROD` |
+
+**Industry auto-deduction.** Don't ask the user for the industry outright — infer
+it from the **brand name** (your knowledge of the brand + the `aliases` in
+`benchmarks/benchmarks.json`) and pick from the closed list of benchmark
+verticals: `all_verticals`, `business`, `charities_foundations_and_non_profit`,
+`education`, `entertainment`, `finance_insurance`, `food_drink`,
+`gambling_gaming`, `government`, `media`, `medical_health_fitness`, `retail`,
+`social`, `sports_recreation`, `travel_transportation`, `utility_productivity`
+(telecom → `utility_productivity`). Briefly confirm the guess, default to
+`all_verticals` if unsure. It positions the project's push/app KPIs against
+market benchmarks on the Slack canvas (refreshed weekly), and can be changed any
+time from the local dashboard's per-project industry chip.
 
 The OAuth credentials and scopes (`rpt` + `tpl`) come from the client's Airship
 project — see [MODOP.md](MODOP.md) §1.4 if the user needs to create them.
@@ -116,6 +129,7 @@ in Cursor, the skill is already available — nothing to install.
     #   slack_canvas_id:                  # leave blank on first run
     #   region: eu
     #   time_zone: Europe/Paris           # IANA tz; defaults to UTC
+    #   industry: retail                  # benchmark vertical (auto-deduced from brand)
     #   enabled: true
     #   # custom_thresholds:
     #   #   push_sends_drop_pct: 40
@@ -176,6 +190,7 @@ Append a **non-secret** entry to `<skill dir>/clients.yml` (no credentials):
     slack_canvas_id:            # blank on first run
     region: <eu|us>
     time_zone: <IANA tz, e.g. Europe/Paris>
+    industry: <benchmark vertical, auto-deduced from the brand>
     enabled: true
 ```
 
@@ -226,6 +241,18 @@ the next client (if any).
   [README.md](README.md) and [MODOP.md](MODOP.md) §2.3.
 - Mention **muting false positives** and **per-project thresholds** (below) so the
   user knows alerts can be silenced and tuned without losing visibility.
+- Mention the **strategic Slack canvas**: instead of week-over-week tables (those
+  drive alerting only), it shows verbose alert analysis, an **executive recap**
+  with brand-activity context, a **global snapshot & industry benchmark** (from the
+  committed `benchmarks/benchmarks.json`, currently Airship UA Benchmarks Q1 2026),
+  a **3-month trend** (app opens, sends per platform, marketing pressure, opt-in
+  rate, time-in-app), 30-day **email deliverability health**, **top campaigns** by
+  type via the Activity Log, and a **unicast** estimate. The strategic sections
+  refresh on a **weekly cadence** (daily runs stay light). A dedicated
+  **canvas-only** command
+  (`Run airship-kpi-monitor canvas` / "update canvas only") refreshes the Slack
+  canvas — including those sections — **without** posting any Slack alerts;
+  handy as a weekly `/loop`.
 
 ## Muting false positives
 

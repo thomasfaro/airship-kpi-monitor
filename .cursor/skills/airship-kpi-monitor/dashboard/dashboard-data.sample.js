@@ -14,6 +14,12 @@
  * positive: it stays visible (flagged "Muted") but is excluded from the row's
  * worst severity and from `alerts.count`; count it in `alerts.mutedCount`.
  * Mute state itself lives in clients.yml `muted_alerts` (see SKILL.md).
+ *
+ * `industry` (optional, per project) is the benchmark vertical slug from
+ * clients.yml (e.g. "retail", "media", "finance_insurance"). It powers the
+ * editable per-project industry chip and the canvas benchmark section. Omit when
+ * unset. With the local server running, editing the chip writes it back to
+ * clients.yml; under file:// the dashboard emits a copy-prompt instead.
  */
 window.AIRSHIP_KPI_DATA = {
   isSample: true,
@@ -54,6 +60,7 @@ window.AIRSHIP_KPI_DATA = {
           name: "Sample Retailer FR PROD",
           channel: "cs-sample-retailer",
           canvasId: "F0SAMPLE001",
+          industry: "retail",
           lastRun: "2026-06-24 · 20:23 CEST",
           alerts: { count: 3, worstSeverity: "danger", mutedCount: 0 },
           // Per-alert detail powers the Mute buttons; severity drives the dots.
@@ -90,6 +97,7 @@ window.AIRSHIP_KPI_DATA = {
           name: "Sample Media PROD",
           channel: "cs-sample-media",
           canvasId: "F0SAMPLE003",
+          industry: "media",
           lastRun: "2026-06-24 · 20:23 CEST",
           // 1 active alert + 1 muted false positive (excluded from worstSeverity).
           alerts: { count: 1, worstSeverity: "warning", mutedCount: 1 },
@@ -112,6 +120,7 @@ window.AIRSHIP_KPI_DATA = {
           name: "Sample Bank PROD",
           channel: "cs-sample-bank",
           canvasId: "F0SAMPLE004",
+          industry: "finance_insurance",
           lastRun: "2026-06-24 · 20:23 CEST",
           alerts: { count: 0, worstSeverity: null },
           trend: "Stable — no significant variations",
@@ -131,7 +140,7 @@ window.AIRSHIP_KPI_DATA = {
       {
         label: "Routing registry (no secrets)",
         path: ".cursor/skills/airship-kpi-monitor/clients.yml",
-        note: "MCP server name, Slack channel, canvas ID, region, time zone.",
+        note: "MCP server name, Slack channel, canvas ID, region, time zone, industry.",
       },
     ],
     checklist: [

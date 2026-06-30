@@ -1,7 +1,7 @@
 # airship-kpi-monitor
 
 Daily KPI monitoring for Airship projects — posts Slack alerts when significant
-metric variations are detected, and maintains a weekly canvas summary.
+metric variations are detected, and maintains a strategic weekly Slack canvas.
 
 Built as a [Cursor Skill](https://cursor.com). All runs are **local**: the
 Airship MCP server runs on your machine via `uv`, so analyses are triggered
@@ -37,6 +37,33 @@ endpoint and the denominator used.
 **Email delay alerts** include an hourly breakdown for the impacted day and
 attempt to correlate delays with large email campaigns (`responses/list` +
 `events/summary/perpush`).
+
+### Strategic Slack canvas
+
+The canvas is **not** a week-over-week dump (that comparison drives alerting only).
+It is a strategic, **visual** report (Unicode sparklines/gauges, status pills,
+bold-summary callouts — no images, since the Slack MCP can't upload them):
+
+- **🚨 Open Alerts** — status-pill table **plus a verbose "Alert analysis"** block:
+  one bullet per active alert (what moved, likely cause, suggested check).
+- **🧭 Executive recap** — a narrative tying the project's health to what it has
+  been **doing**, with a best-effort link to the **brand's activity / news**.
+- **🌍 Global snapshot & benchmark** — global opt-in/devices per OS positioned
+  against the project's **industry vertical** (committed Airship UA Benchmarks:
+  client value · median p50 · [p10–p90] range · gap · band).
+- **📈 3-month trend** — 13-week sparklines + a monthly table for **app opens,
+  sends per platform, marketing pressure, opt-in rate, and time-in-app**.
+- **📧 Email deliverability health** — last 30 days, one row per day.
+- **🏆 Top campaigns — last 30 days** — via the **Activity Log**, ranked **by type**
+  (one-shot / recurring / experiment) **and platform**, with message **names +
+  categories** and volume drift. Robust against false positives (test sends
+  excluded, volume floors, identity aggregation).
+- **📨 Unicast / transactional** — an aggregate estimate of 1:1 API-triggered
+  sends (excluded from the Activity Log; content not retrievable, best-effort).
+
+The project's **industry** is auto-deduced from its brand at setup and editable
+from the local dashboard. The heavy strategic sections refresh on a **weekly
+cadence**; the alert + history sections update on every run.
 
 ---
 
@@ -146,6 +173,24 @@ Run airship-kpi-monitor for Client A.
 Runs immediately, then every 24 h. Requires Cursor to stay open; uses your
 local MCP servers.
 
+### Canvas-only / alerts-only (run scopes)
+
+```
+# Refresh the Slack canvas ONLY (incl. weekly insight sections) — no alert posts
+Run airship-kpi-monitor canvas for all clients.
+
+# Light daily run — alerts + KPI tables, skip the heavy weekly insight sections
+Run airship-kpi-monitor alerts-only for all clients.
+```
+
+`canvas` (aliases: "update canvas only", "canvas refresh") rebuilds each Slack
+canvas — **forcing** the executive recap, global snapshot & benchmark, 3-month
+trend, top-campaigns, and unicast sections — while **skipping** all Slack
+alert/resolution messages and the local views. Pair
+it with `/loop 7d …` for a weekly canvas refresh decoupled from daily alerts.
+`alerts-only` is the symmetrical light run; the default `full` does everything,
+with the heavy sections naturally rate-limited to weekly.
+
 ---
 
 ## Local dashboard — the primary surface
@@ -170,7 +215,8 @@ In served mode you can, from the page:
 - edit **per-project thresholds** (every threshold, prefilled, with reset),
 - manage the **routing registry** in the **Setup** tab — add / edit / remove
   projects (name, brand, MCP server, Slack channel, canvas ID, region, time zone,
-  enabled).
+  industry, enabled), and set each project's **industry** (benchmark vertical)
+  from its per-project chip.
 
 The server is **localhost-only** (binds `127.0.0.1`, same-origin checks), edits
 **only** the gitignored `clients.yml`, and **rejects any secret-shaped field** —
@@ -261,7 +307,7 @@ sequentially. Your client list never leaves your machine — the repo only
 contains the skill.
 
 > **Credentials vs routing**: `clients.yml` holds **no secrets** — only routing
-> (MCP server name, Slack channel, region, time zone). OAuth credentials live solely in
+> (MCP server name, Slack channel, region, time zone, industry). OAuth credentials live solely in
 > your local `~/.cursor/mcp.json`, configured once per client (see
 > [MODOP.md](MODOP.md) §1.5). Setting up many clients at once? An optional
 > generator (`scripts/generate_mcp_config.py` + a gitignored
@@ -284,6 +330,7 @@ clients:
     slack_canvas_id: F0XXXXXXXX        # leave blank on first run
     region: eu
     time_zone: Europe/Paris            # IANA tz — local day + hourly interpretation
+    industry: retail                   # benchmark vertical — auto-deduced from brand_name
     enabled: true
     # custom_thresholds:
     #   push_sends_drop_pct: 40
@@ -354,6 +401,14 @@ Minimum volumes (thresholds skipped if previous window is below these):
 | `min_sms_dispatched` | 50 |
 | `min_web_sends` | 100 |
 
+Weekly insights — top campaigns (analytics only, never alert):
+
+| Key | Default |
+|---|---|
+| `min_campaign_sends` | 1000 (ignore a campaign identity below this over 30d) |
+| `min_recurring_occurrences` | 3 (min occurrences to treat a series as recurring) |
+| `recurring_drift_pct` | 50 (flag a recurring series deviating > 50% from its median) |
+
 ---
 
 ## Changing default thresholds globally
@@ -379,6 +434,10 @@ airship-kpi-monitor/
 │       └── airship-kpi-monitor/
 │           ├── SKILL.md                 ← core logic (read by Cursor agents)
 │           ├── clients.secrets.example.yml  ← template for the optional MCP generator
+│           ├── benchmarks/              ← committed market benchmarks (no secrets)
+│           │   ├── benchmarks.json      ← Airship UA Benchmarks (read at runtime)
+│           │   ├── benchmarks.md        ← human-readable rendering
+│           │   └── README.md            ← provenance + refresh instructions
 │           ├── dashboard/               ← local dashboard (committed app, no data)
 │           │   ├── index.html           ← open in any browser (no server)
 │           │   ├── styles.css
@@ -388,7 +447,9 @@ airship-kpi-monitor/
 │           │   ├── serve.py             ← optional local server (mute / thresholds / routing CRUD)
 │           │   └── serve.command        ← macOS one-click launcher for serve.py
 │           └── scripts/
-│               └── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
+│               ├── generate_mcp_config.py   ← optional: bulk-build ~/.cursor/mcp.json
+│               ├── import_benchmarks.py      ← regenerate benchmarks.json from a quarterly xlsx
+│               └── classify_campaigns.py     ← one-shot vs recurring campaign classifier
 ├── SETUP.md                     ← agent-guided installer playbook
 ├── MODOP.md                     ← manual step-by-step setup guide for TAMs
 ├── AGENTS.md                    ← architecture notes for coding agents

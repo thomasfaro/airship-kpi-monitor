@@ -292,6 +292,7 @@ clients:
     slack_canvas_id: F0XXXXXXXX          # leave blank on first run
     region: eu
     time_zone: Europe/Paris              # IANA tz — local day + hourly interpretation
+    industry: retail                     # benchmark vertical — auto-deduced from brand_name
     enabled: true
     # custom_thresholds:
     #   push_sends_drop_pct: 40
@@ -309,6 +310,17 @@ clients:
 > cause analysis — use the consumer name rather than the internal project code
 > (e.g. the client's actual brand name, not their Airship project shorthand).
 > Defaults to `name` if omitted.
+
+> `industry` is the project's **market vertical** (a benchmark vertical slug from
+> `benchmarks/benchmarks.json`), used to position its push/app KPIs against
+> Airship market benchmarks on the Slack canvas. The setup agent **auto-deduces**
+> it from `brand_name`; you can change it any time from the local dashboard's
+> per-project industry chip. Use one of: `all_verticals`, `business`,
+> `charities_foundations_and_non_profit`, `education`, `entertainment`,
+> `finance_insurance`, `food_drink`, `gambling_gaming`, `government`, `media`,
+> `medical_health_fitness`, `retail`, `social`, `sports_recreation`,
+> `travel_transportation`, `utility_productivity` (telecom →
+> `utility_productivity`). Defaults to `all_verticals` if omitted.
 
 Top-level `slack_workspace` / `slack_team_id` keys (already set in the template)
 build the clickable canvas link — change them only if your Slack channels live on
@@ -330,6 +342,21 @@ from Cursor chat with the relevant MCP servers enabled:
   `/loop 1d Run airship-kpi-monitor for all clients in clients.yml` — runs
   immediately, then every 24h. Requires Cursor to stay open; uses your local
   MCP servers (no hosting needed).
+- **Canvas-only refresh** (Slack canvas, no alert posts):
+  `Run airship-kpi-monitor canvas for all clients` (aliases: "update canvas
+  only", "canvas refresh"). Rebuilds each Slack canvas **including** the weekly
+  insight sections (executive recap, global snapshot & benchmark, 3-month trend,
+  top campaigns, unicast) while **skipping** all Slack alert/resolution messages
+  and the local views. Pair it
+  with `/loop 7d …` for a dedicated weekly canvas refresh, decoupled from the
+  daily alert run. Use **`alerts-only`** for the symmetrical light daily run that
+  skips the heavy weekly sections.
+
+> **Weekly cadence.** The strategic canvas sections (executive recap, global
+> snapshot & benchmark, 3-month trend, top campaigns, unicast) refresh on a
+> **weekly** cadence so daily runs stay
+> fast; `full` runs rebuild them only once the week elapses, `canvas-only` always
+> forces them, and `alerts-only` never builds them.
 
 ### 2.4 The local dashboard (your main surface)
 

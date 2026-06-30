@@ -50,6 +50,9 @@ PORT = int(os.environ.get("AIRSHIP_KPI_DASHBOARD_PORT", "8787"))
 DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
 CLIENTS_YML = os.path.normpath(os.path.join(DASHBOARD_DIR, "..", "clients.yml"))
 CATALOG_JS = os.path.join(DASHBOARD_DIR, "thresholds-catalog.js")
+BENCHMARKS_JSON = os.path.normpath(
+    os.path.join(DASHBOARD_DIR, "..", "benchmarks", "benchmarks.json")
+)
 
 # Routing fields the Setup view may write. Anything else is ignored, and any
 # secret-shaped key is rejected outright (defence in depth).
@@ -61,6 +64,7 @@ ROUTING_FIELDS = (
     "slack_canvas_id",
     "region",
     "time_zone",
+    "industry",
     "enabled",
 )
 SECRET_RE = re.compile(
@@ -144,6 +148,22 @@ def load_catalog_keys():
 
 
 # --------------------------------------------------------------------------- #
+# Benchmark verticals (industry validation + browser dropdown source)
+# --------------------------------------------------------------------------- #
+def load_verticals():
+    """Return {slug: label} of valid industries from benchmarks.json (best-effort)."""
+    try:
+        with open(BENCHMARKS_JSON, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        out = {}
+        for slug, v in (data.get("verticals") or {}).items():
+            out[str(slug)] = str((v or {}).get("label") or slug)
+        return out
+    except Exception:
+        return {}
+
+
+# --------------------------------------------------------------------------- #
 # State (read-only projection of clients.yml — never any secret)
 # --------------------------------------------------------------------------- #
 def build_state(doc):
@@ -170,6 +190,7 @@ def build_state(doc):
                 "slack_canvas_id": c.get("slack_canvas_id", ""),
                 "region": c.get("region", ""),
                 "time_zone": c.get("time_zone", ""),
+                "industry": c.get("industry", ""),
                 "enabled": bool(c.get("enabled", True)),
                 "custom_thresholds": ct,
                 "muted_alerts": muted,
@@ -179,6 +200,7 @@ def build_state(doc):
         "serverMode": True,
         "slackWorkspace": doc.get("slack_workspace", ""),
         "slackTeamId": doc.get("slack_team_id", ""),
+        "verticals": load_verticals(),
         "clients": out_clients,
     }
 
@@ -340,6 +362,15 @@ def _validate_routing(fields):
         raise ApiError("time_zone must not be empty")
     if "enabled" in fields and not isinstance(fields.get("enabled"), bool):
         raise ApiError("enabled must be a boolean")
+    if "industry" in fields:
+        ind = str(fields.get("industry") or "").strip()
+        verticals = load_verticals()
+        # Empty clears the field; otherwise must be a known vertical slug (when the
+        # benchmark file is available — if it isn't, accept any non-empty value).
+        if ind and verticals and ind not in verticals:
+            raise ApiError(
+                "unknown industry: %s (use a benchmark vertical slug)" % ind
+            )
 
 
 def op_client_upsert(payload):

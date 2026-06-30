@@ -24,7 +24,8 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "id": "web", "label": "Web push" },
     { "id": "sms", "label": "SMS" },
     { "id": "custom", "label": "Custom events" },
-    { "id": "minvol", "label": "Minimum volumes (anti false-positive)" }
+    { "id": "minvol", "label": "Minimum volumes (anti false-positive)" },
+    { "id": "insights", "label": "Weekly insights — top campaigns" }
   ],
   "items": [
     { "key": "app_opens_drop_pct", "label": "App opens drop", "group": "app", "unit": "%", "default": 40, "hint": "WoW drop > X% on that OS -> alert (per OS)" },
@@ -71,6 +72,10 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "key": "min_timeinapp", "label": "Min time-in-app", "group": "minvol", "unit": "", "default": 1, "hint": "Skip time-in-app threshold if prev avg < X" },
     { "key": "min_sms_sends", "label": "Min SMS sends", "group": "minvol", "unit": "", "default": 100, "hint": "Skip SMS sends thresholds if prev 7d SMS sends < X" },
     { "key": "min_sms_dispatched", "label": "Min SMS dispatched", "group": "minvol", "unit": "", "default": 50, "hint": "Skip SMS delivery-rate threshold if prev 7d dispatched < X" },
-    { "key": "min_web_sends", "label": "Min web push sends", "group": "minvol", "unit": "", "default": 100, "hint": "Skip web push threshold if prev 7d web sends < X" }
+    { "key": "min_web_sends", "label": "Min web push sends", "group": "minvol", "unit": "", "default": 100, "hint": "Skip web push threshold if prev 7d web sends < X" },
+
+    { "key": "min_campaign_sends", "label": "Min campaign sends (30d)", "group": "insights", "unit": "", "default": 1000, "hint": "Ignore a campaign identity below X sends over 30d (top-campaigns section)" },
+    { "key": "min_recurring_occurrences", "label": "Min recurring occurrences", "group": "insights", "unit": "", "default": 3, "hint": "Min occurrences to treat a series as automated/recurring" },
+    { "key": "recurring_drift_pct", "label": "Recurring volume drift flag", "group": "insights", "unit": "%", "default": 50, "hint": "Flag a recurring series whose latest volume deviates > X% from its median" }
   ]
 };

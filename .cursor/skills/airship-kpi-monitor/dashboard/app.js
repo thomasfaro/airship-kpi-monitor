@@ -22,6 +22,51 @@
     info: { label: "Info", rank: 2, pill: "pill--info", row: "row--info" },
   };
 
+  // Benchmark verticals (industry). Used to position KPIs vs market peers on the
+  // Slack canvas. The server sends the authoritative list (from benchmarks.json);
+  // this is the offline fallback so the picker works under file:// too.
+  var VERTICALS_FALLBACK = {
+    all_verticals: "All_verticals",
+    business: "Business",
+    charities_foundations_and_non_profit: "Charities, Foundations, and Non-Profit",
+    education: "Education",
+    entertainment: "Entertainment",
+    finance_insurance: "Finance & Insurance",
+    food_drink: "Food & Drink",
+    gambling_gaming: "Gambling, Gaming",
+    government: "Government",
+    media: "Media",
+    medical_health_fitness: "Medical, Health & Fitness",
+    retail: "Retail",
+    social: "Social",
+    sports_recreation: "Sports & Recreation",
+    travel_transportation: "Travel & Transportation",
+    utility_productivity: "Utility & Productivity",
+  };
+  function verticals() {
+    return (APP.state && APP.state.verticals && Object.keys(APP.state.verticals).length)
+      ? APP.state.verticals
+      : VERTICALS_FALLBACK;
+  }
+  function verticalLabel(slug) {
+    if (!slug) return "";
+    var v = verticals();
+    return v[slug] || slug;
+  }
+  function verticalOptions(selected) {
+    var v = verticals();
+    return Object.keys(v).map(function (slug) {
+      return '<option value="' + esc(slug) + '"' + (slug === selected ? " selected" : "") + ">" + esc(v[slug]) + "</option>";
+    }).join("");
+  }
+  // Resolve a project's current industry from live server state first, then the
+  // run snapshot (p.industry written by the skill).
+  function projIndustry(p) {
+    var c = stateClient(p.name);
+    if (c && c.industry) return c.industry;
+    return p.industry || "";
+  }
+
   // Mutable app state shared across renders.
   var APP = { data: null, serverMode: false, state: null, view: "monitor" };
 
@@ -94,6 +139,9 @@
   }
   function resetThresholdPrompt(project, key) {
     return 'Reset airship-kpi-monitor threshold "' + key + '" to default for project "' + project + '"';
+  }
+  function setIndustryPrompt(project, industry) {
+    return 'Set airship-kpi-monitor industry to "' + industry + '" for project "' + project + '"';
   }
   function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -260,6 +308,40 @@
     api("/api/unmute", { project: project, key: key })
       .then(function () { applyMuteLocal(project, key, false); rerender(); toast("Unmuted " + key); })
       .catch(function (e) { toast("Error: " + e.message, "danger"); });
+  }
+
+  // --- industry (benchmark vertical) editor ----------------------------------
+  // Reflect an industry change immediately in the in-memory run data.
+  function applyIndustryLocal(project, industry) {
+    (APP.data.clients || []).forEach(function (c) {
+      (c.projects || []).forEach(function (p) {
+        if (String(p.name).toLowerCase() === String(project).toLowerCase()) p.industry = industry;
+      });
+    });
+    var sc = stateClient(project);
+    if (sc) sc.industry = industry;
+  }
+  function onIndustry(project, current) {
+    var m = modal({
+      title: "Industry \u2014 " + project,
+      bodyHtml:
+        '<p class="dialog__hint">Market vertical used to position this project\u2019s push/app KPIs ' +
+        "against Airship benchmarks on the Slack canvas." +
+        (APP.serverMode ? " Saved to your local clients.yml." : " No local server \u2014 this becomes a prompt to paste into Cursor chat.") + "</p>" +
+        '<label class="fld"><span>Industry</span><select class="dialog__sel" id="indSel">' +
+          verticalOptions(current || "all_verticals") +
+        "</select></label>",
+      actions: [
+        { label: APP.serverMode ? "Save" : "Copy prompt", primary: true, onClick: function (close, dlg, st) {
+          var slug = dlg.querySelector("#indSel").value;
+          if (!APP.serverMode) { close(); copyModal("Industry \u2014 paste into chat", setIndustryPrompt(project, slug)); return; }
+          st.textContent = "Saving\u2026";
+          api("/api/client", { name: project, oldName: project, industry: slug })
+            .then(function () { applyIndustryLocal(project, slug); close(); rerender(); toast("Industry set to " + verticalLabel(slug)); })
+            .catch(function (e) { st.style.color = "var(--danger)"; st.textContent = "Error: " + e.message; });
+        } },
+      ],
+    });
   }
 
   // --- thresholds editor -----------------------------------------------------
@@ -689,6 +771,9 @@
       ? '<a class="linkbtn" href="' + esc(canvasLink(data, p.canvasId)) + '">\uD83D\uDCCA Canvas</a>'
       : "";
     var thr = '<button class="linkbtn thbtn" type="button" data-project="' + esc(p.name) + '">\u2699 Thresholds</button>';
+    var ind = projIndustry(p);
+    var indBtn = '<button class="linkbtn indbtn" type="button" data-project="' + esc(p.name) + '" data-industry="' + esc(ind) + '" title="Industry vertical for benchmark comparison">\uD83C\uDFF7\uFE0F ' +
+      (ind ? esc(verticalLabel(ind)) : "Set industry") + "</button>";
 
     var mutedKeys = (pa.list || []).filter(function (a) { return a.muted; }).map(function (a) { return a.key; }).join(" ");
     var hay = (p.name + " " + (c.name || "") + " " + (p.channel || "") + " " +
@@ -704,6 +789,7 @@
           '<div class="proj__head-right">' +
             '<span class="proj__badges">' + badges + "</span>" +
             '<span class="proj__when">\uD83D\uDD52 ' + esc(p.lastRun || "\u2014") + "</span>" +
+            indBtn +
             thr +
             canvas +
           "</div>" +
@@ -773,6 +859,10 @@
         '<option value="eu"' + (region === "eu" ? " selected" : "") + ">eu</option>" +
         '<option value="us"' + (region === "us" ? " selected" : "") + ">us</option>" +
       "</select></label>";
+    var industrySel =
+      '<label class="fld"><span>Industry (benchmark vertical)</span><select data-f="industry">' +
+        verticalOptions(String(c.industry || "all_verticals")) +
+      "</select></label>";
     var enabled = c.enabled !== false;
     var enabledChk =
       '<label class="fld fld--check"><input data-f="enabled" type="checkbox"' + (enabled ? " checked" : "") + " /> <span>Enabled (included in runs)</span></label>";
@@ -783,7 +873,7 @@
         '<button type="button" class="btn setup-smoke" title="Copy an MCP smoke-test prompt">Smoke test</button>' +
         '<button type="button" class="btn setup-delete">Delete</button>';
     return (
-      '<div class="cfrm__grid">' + fields + regionSel + enabledChk + "</div>" +
+      '<div class="cfrm__grid">' + fields + regionSel + industrySel + enabledChk + "</div>" +
       '<div class="cfrm__actions">' + actions + '<span class="cfrm__status"></span></div>'
     );
   }
@@ -1041,6 +1131,11 @@
     // Thresholds
     root.querySelectorAll(".thbtn").forEach(function (b) {
       b.addEventListener("click", function () { openThresholds(b.getAttribute("data-project")); });
+    });
+
+    // Industry (benchmark vertical)
+    root.querySelectorAll(".indbtn").forEach(function (b) {
+      b.addEventListener("click", function () { onIndustry(b.getAttribute("data-project"), b.getAttribute("data-industry")); });
     });
 
     // Setup view
