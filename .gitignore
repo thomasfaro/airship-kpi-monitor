@@ -1,0 +1,33 @@
+# Local-only files — never commit credentials, client data, or machine config.
+
+# Each TAM's own client list — created locally, never committed.
+# Matches at any depth; the explicit path documents where it now lives.
+clients.yml
+/.cursor/skills/airship-kpi-monitor/clients.yml
+
+# Local HTML dashboard data — written by the skill each run (no secrets, but
+# contains client routing/state). The dashboard app itself (index.html,
+# styles.css, app.js, dashboard-data.sample.js, thresholds-catalog.js, serve.py,
+# serve.command) IS committed.
+/.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js
+
+# Local dashboard server runtime artifacts (optional serve.py — never committed).
+# Generic (any location) + explicit path for documentation.
+.server.pid
+.server.log
+/.cursor/skills/airship-kpi-monitor/dashboard/.server.pid
+/.cursor/skills/airship-kpi-monitor/dashboard/.server.log
+
+# Optional bulk-generator secrets (OAuth creds + local airship-mcp path).
+clients.secrets.yml
+*.secrets.yml
+
+# Cursor MCP config (lives in ~/.cursor/mcp.json; only copied here for debugging).
+mcp.json
+mcp.json.bak
+
+# Python / tooling cruft
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
