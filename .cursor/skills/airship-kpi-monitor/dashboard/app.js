@@ -1237,7 +1237,7 @@
     push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days." },
     optouts: { src: "/api/reports/optouts \u00F7 /api/reports/sends", calc: "\u03A3 push opt-outs over 7 days, per OS. Two signals: RAW COUNT (WoW \u0394%) and the per-send RATE = opt-outs \u00F7 push sends \u00D7 100. The alert fires only when BOTH the raw count rises \u2265 optouts_rise_pct AND the rate worsens \u2265 optout_rate_rise_pct \u2014 so a volume-driven rise (rate flat/down while sends grow) is suppressed." },
     optins: { src: "/api/reports/optins", calc: "\u03A3 NEW push opt-ins over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days. Distinct from opt-in RATE (opted-in \u00F7 unique devices, from /devices)." },
-    direct_response_rate: { src: "/api/reports/responses", calc: "Rate = direct responses \u00F7 push sends \u00D7 100, per OS, over the 7-day window. WoW \u0394 in percentage points. Tracking-health signal." },
+    direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100, per OS, over the 7-day window. WoW \u0394 in percentage points. Tracking-health signal." },
     devices_unique: { src: "/api/reports/devices", calc: "Unique-devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot." },
     devices_optin: { src: "/api/reports/devices", calc: "Opted-in devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot. This is the opt-in BASE, not new opt-ins." },
     devices_uninstall: { src: "/api/reports/devices", calc: "Uninstalled-devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot." },

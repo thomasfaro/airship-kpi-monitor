@@ -123,7 +123,7 @@ window.AIRSHIP_KPI_DATA = {
               ],
             },
             {
-              key: "direct_response_rate", label: "Direct response rate", group: "push", channel: "push", unit: "%",
+              key: "direct_response_rate", label: "Click rate", group: "push", channel: "push", unit: "%",
               current: 0.1, previous: 0.6, deltaPts: -0.5,
               threshold: { key: "direct_response_rate_min", value: 0.5, kind: "floor", headroom: -0.4, breaching: true },
               status: "confirmed",
@@ -180,7 +180,7 @@ window.AIRSHIP_KPI_DATA = {
           trend: [
             "App opens ↓34% iOS / ↓41% Android",
             "Opt-ins ↓37%",
-            "Direct response ~0.1% — structural decline since Jun 16",
+            "Click rate ~0.1% — structural decline since Jun 16",
           ],
           // Per-run open-alert counts, newest last (drives the row sparkline).
           alertHistory: [4, 3, 3, 5, 3, 3, 3],

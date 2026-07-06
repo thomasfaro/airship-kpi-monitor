@@ -425,7 +425,7 @@ denominator used.**
 | Push sends (per OS) | `/api/reports/sends` | raw count |
 | Push opt-outs (per OS) | `/api/reports/optouts` | rate = opt-outs / push sends |
 | Opt-ins (per OS) | `/api/reports/optins` | raw count; net = opt-ins − opt-outs |
-| Direct response rate (per OS) | `/api/reports/responses` | rate = direct / push sends |
+| Click rate (direct responses, per OS) | `/api/reports/responses` | rate = direct / push sends (labelled "Click rate" in outputs) |
 | Time in app (per OS) | `/api/reports/timeinapp` | avg value/day returned by Airship |
 | Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
 | Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
@@ -1795,9 +1795,9 @@ cause line at the bottom of the message. If no cause was identified, write:
   *improved*:
   `> ℹ️ Raw count increase is volume-driven (push sends also +98%); opt-out rate per send improved.`
 
-- Direct response must appear as **"Direct response rate (vs sends)"** with the
-  denominator and source stated. When a collapse fires, add the explicit
-  tracking caveat:
+- Direct response must appear as **"Click rate (vs sends)"** (direct responses =
+  push clicks) with the denominator and source stated. When a collapse fires, add
+  the explicit tracking caveat:
   `> ⚠️ Likely a tracking/SDK issue on {os}, not a real engagement drop (direct / push sends, source /api/reports/responses).`
 
 - Time in app must appear as **"Avg time in app /day"** with OS and source
