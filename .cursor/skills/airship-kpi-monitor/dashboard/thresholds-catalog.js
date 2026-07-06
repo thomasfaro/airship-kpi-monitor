@@ -38,7 +38,8 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "key": "devices_uninstall_rise_pct", "label": "Uninstalls rise", "group": "devices", "unit": "%", "default": 10, "hint": "Rise > X% vs canvas D-7 snapshot (per OS) -> alert" },
 
     { "key": "push_sends_drop_pct", "label": "Push sends drop", "group": "push", "unit": "%", "default": 100, "hint": "Drop > X% (per OS) -> alert; 100 = only when sends go to zero" },
-    { "key": "optouts_rise_pct", "label": "Push opt-outs rise", "group": "push", "unit": "%", "default": 20, "hint": "Opt-out raw count rise > X% (per OS) -> alert" },
+    { "key": "optouts_rise_pct", "label": "Push opt-outs rise (raw)", "group": "push", "unit": "%", "default": 20, "hint": "Opt-out raw count rise > X% (per OS) -> magnitude pre-filter; alert only if the rate also rises (see below)" },
+    { "key": "optout_rate_rise_pct", "label": "Push opt-out rate rise", "group": "push", "unit": "%", "default": 15, "hint": "Opt-out RATE per send (opt-outs / sends) must rise > X% WoW for the alert to fire. Volume-driven rises (rate flat/down) are suppressed" },
     { "key": "direct_response_rate_min", "label": "Direct response rate floor", "group": "push", "unit": "%", "default": 0.5, "hint": "Current-window rate < X% -> alert (tracking-health)" },
     { "key": "direct_response_collapse_pct", "label": "Direct response collapse", "group": "push", "unit": "%", "default": 60, "hint": "WoW drop of the response RATE >= X% -> likely tracking/SDK issue" },
 

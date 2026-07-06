@@ -1227,6 +1227,43 @@
     return wrap;
   }
 
+  // Per-KPI provenance: which Airship Reports API endpoint feeds the metric and
+  // exactly how it is computed. Keyed by metric family (base key without the
+  // _ios/_android/_web OS suffix) so it works retroactively on old snapshots
+  // without re-running the skill. Mirrors SKILL.md "Data sources" table.
+  var KPI_META = {
+    app_opens: { src: "/api/reports/opens", calc: "\u03A3 daily app opens over the 7-day window, per OS (raw count). WoW \u0394% = (current \u2212 previous) \u00F7 previous \u00D7 100." },
+    timeinapp: { src: "/api/reports/timeinapp", calc: "Average time-in-app per day (Airship value), per OS. WoW \u0394% vs the previous 7-day window." },
+    push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days." },
+    optouts: { src: "/api/reports/optouts \u00F7 /api/reports/sends", calc: "\u03A3 push opt-outs over 7 days, per OS. Two signals: RAW COUNT (WoW \u0394%) and the per-send RATE = opt-outs \u00F7 push sends \u00D7 100. The alert fires only when BOTH the raw count rises \u2265 optouts_rise_pct AND the rate worsens \u2265 optout_rate_rise_pct \u2014 so a volume-driven rise (rate flat/down while sends grow) is suppressed." },
+    optins: { src: "/api/reports/optins", calc: "\u03A3 NEW push opt-ins over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days. Distinct from opt-in RATE (opted-in \u00F7 unique devices, from /devices)." },
+    direct_response_rate: { src: "/api/reports/responses", calc: "Rate = direct responses \u00F7 push sends \u00D7 100, per OS, over the 7-day window. WoW \u0394 in percentage points. Tracking-health signal." },
+    devices_unique: { src: "/api/reports/devices", calc: "Unique-devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot." },
+    devices_optin: { src: "/api/reports/devices", calc: "Opted-in devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot. This is the opt-in BASE, not new opt-ins." },
+    devices_uninstall: { src: "/api/reports/devices", calc: "Uninstalled-devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot." },
+    email_sends: { src: "/api/reports/sends", calc: "\u03A3 emails sent over 7 days (field `email`). WoW \u0394% vs previous 7 days." },
+    email_deliverability: { src: "/api/reports/events", calc: "Delivered \u00F7 injected \u00D7 100 over the window (absolute rate)." },
+    email_open_rate: { src: "/api/reports/events", calc: "Deduplicated opens (`initial_open`) \u00F7 delivered \u00D7 100. WoW \u0394 in percentage points." },
+    email_bounce: { src: "/api/reports/events", calc: "Bounces \u00F7 injected \u00D7 100 over the window (absolute rate)." },
+    email_spam_complaint_rate: { src: "/api/reports/events", calc: "Daily spam_complaint \u00F7 delivery \u00D7 100 (precision=DAILY)." },
+    email_delay_rate: { src: "/api/reports/events", calc: "Hourly delay \u00F7 delivery \u00D7 100 (precision=HOURLY), confirmed over \u2265 N consecutive hours." },
+    web_sends: { src: "/api/reports/sends", calc: "\u03A3 web-push sends over 7 days (field `web`). WoW \u0394% vs previous 7 days." },
+    sms_sends: { src: "/api/reports/sends", calc: "\u03A3 SMS sends over 7 days (field `sms`). WoW \u0394% vs previous 7 days." },
+    sms_delivery_rate: { src: "/api/reports/events", calc: "Delivered \u00F7 dispatched \u00D7 100 (SMS delivery-report events)." },
+    custom_event: { src: "/api/reports/events", calc: "\u03A3 custom-event count over 7 days. WoW \u0394% vs previous 7 days." },
+  };
+  // Resolve the provenance entry for a metric key by longest matching family.
+  function kpiMeta(key) {
+    var k = String(key || "");
+    var best = null;
+    Object.keys(KPI_META).forEach(function (fam) {
+      if (k === fam || k.indexOf(fam + "_") === 0) {
+        if (!best || fam.length > best.length) best = fam;
+      }
+    });
+    return best ? KPI_META[best] : null;
+  }
+
   function kpiCard(m) {
     var t = m.threshold || {};
     var osHtml = "";
@@ -1238,6 +1275,35 @@
     }
     var series = (m.series || []).map(function (s) { return typeof s === "object" ? s.v : s; });
     var sparkHtml = series.length >= 2 ? '<div class="kcard__spark">' + lineSparkline(series, 150, 30) + "</div>" : "";
+    // Opt-out (and any rate-correlated) metrics carry a `rate` object so the raw
+    // count is read alongside the per-send rate that actually drives the alert.
+    var rateHtml = "";
+    if (m.rate) {
+      var r = m.rate;
+      if (typeof r.current === "number") {
+        var dir = typeof r.deltaPct === "number"
+          ? (r.deltaPct > 0 ? "up" : r.deltaPct < 0 ? "down" : "flat")
+          : "flat";
+        var arrow = dir === "up" ? "\u25B2" : dir === "down" ? "\u25BC" : "\u25AC";
+        var deltaTxt = typeof r.deltaPct === "number" ? " (" + arrow + " " + Math.abs(r.deltaPct).toFixed(1) + "% WoW)" : "";
+        rateHtml =
+          '<div class="kcard__rate kcard__rate--' + dir + '">' +
+            "Rate/send " + r.current.toFixed(1) + "% " +
+            '<span class="kcard__rate-prev">prev ' + (typeof r.previous === "number" ? r.previous.toFixed(1) + "%" : "\u2014") + "</span>" +
+            '<span class="kcard__rate-delta">' + esc(deltaTxt) + "</span>" +
+          "</div>";
+      } else if (r.note) {
+        rateHtml = '<div class="kcard__rate kcard__rate--flat">Rate/send: ' + esc(r.note) + "</div>";
+      }
+    }
+    var noteHtml = m.note ? '<div class="kcard__note">' + esc(m.note) + "</div>" : "";
+    var meta = kpiMeta(m.key);
+    var metaHtml = meta
+      ? '<details class="kcard__meta"><summary>Source &amp; calc</summary>' +
+          '<div class="kcard__src">Source <code>' + esc(meta.src) + "</code></div>" +
+          '<div class="kcard__calc">' + esc(meta.calc) + "</div>" +
+        "</details>"
+      : "";
     return (
       '<article class="kcard kcard--' + metricStatus(m).c + '">' +
         '<div class="kcard__top">' +
@@ -1250,9 +1316,12 @@
           '<span class="kcard__prev">prev ' + fmtVal(m.previous, m.unit) + "</span>" +
           '<span class="kcard__wow">WoW ' + deltaChip(m) + "</span>" +
         "</div>" +
+        rateHtml +
+        noteHtml +
         osHtml +
         sparkHtml +
         headroomGauge(t, thresholdUnit(t)) +
+        metaHtml +
       "</article>"
     );
   }
@@ -1303,16 +1372,19 @@
         var dirArrow = s.direction === "tighten" ? "\u25BC tighten" : "\u25B2 loosen";
         var conf = s.confidence || "low";
         var basisLbl = { volatility: "volatility", false_positives: "false positives", headroom: "chronic headroom" }[s.basis] || (s.basis || "");
+        var isApplied = eff != null && Number(eff) === Number(s.suggested);
         return (
-          "<tr>" +
+          "<tr" + (isApplied ? ' class="th__row--applied"' : "") + ">" +
             '<td class="th__k"><span class="th__label">' + esc(it ? it.label : s.key) + "</span><code>" + esc(s.key) + "</code></td>" +
-            '<td class="th__eff">' + esc(effVal) + esc(unit) + (eff != null ? ' <span class="th__ov">override</span>' : "") + "</td>" +
+            '<td class="th__eff">' + esc(effVal) + esc(unit) + (eff != null ? ' <span class="th__ov">' + (isApplied ? "\u2713 applied" : "override") + "</span>" : "") + "</td>" +
             '<td class="th__sug"><span class="th__dir th__dir--' + esc(s.direction || "") + '">' + dirArrow + "</span> " +
               '<strong>' + esc(s.suggested) + esc(unit) + "</strong>" +
               '<span class="th__conf th__conf--' + esc(conf) + '" title="Confidence">' + esc(conf) + "</span>" +
               '<div class="th__why"><span class="th__basis">' + esc(basisLbl) + "</span> " + esc(s.rationale || "") + "</div></td>" +
             '<td class="th__act">' +
-              '<button class="btn btn--sm btn--primary th-apply" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '" data-val="' + esc(s.suggested) + '">Apply</button>' +
+              (isApplied
+                ? '<span class="th__applied-badge">\u2713 Applied</span>'
+                : '<button class="btn btn--sm btn--primary th-apply" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '" data-val="' + esc(s.suggested) + '">Apply</button>') +
               '<button class="btn btn--sm th-edit" data-project="' + esc(p.name) + '">Edit</button>' +
               '<button class="btn btn--sm th-reset" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '">Reset</button>' +
             "</td>" +

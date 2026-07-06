@@ -1184,7 +1184,9 @@ devices_uninstall_rise_pct: 10  # rise > 10% → alert
 
 # Push mobile (evaluated PER OS: ios, android)
 push_sends_drop_pct: 100        # drop > 100% (i.e. zero sends) → alert
-optouts_rise_pct: 20            # push opt-out raw count rise > 20% → alert (rate per send also shown)
+optouts_rise_pct: 20            # push opt-out RAW COUNT rise > 20% → magnitude pre-filter (necessary, not sufficient)
+optout_rate_rise_pct: 15        # AND the opt-out RATE per send must rise ≥ 15% WoW → alert. If the raw count
+                                #   grows because sends/audience grew (rate flat or down), it is volume-driven → NO alert
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 direct_response_collapse_pct: 60 # WoW drop of direct response RATE ≥ 60% on an OS → likely tracking/SDK issue
 
@@ -1263,10 +1265,14 @@ push_sends_{os}_delta_pct = (current - previous) / previous * 100
 # Push opt-outs (raw + rate vs sends)
 push_optouts_{os}_current  = sum(optouts.{os}) over current window
 push_optouts_{os}_previous = sum(optouts.{os}) over previous window
+push_optouts_{os}_delta_pct = (push_optouts_{os}_current - push_optouts_{os}_previous) / push_optouts_{os}_previous * 100
 push_optout_rate_{os}_current  = push_optouts_{os}_current  / push_sends_{os}_current  * 100
 push_optout_rate_{os}_previous = push_optouts_{os}_previous / push_sends_{os}_previous * 100
+push_optout_rate_{os}_delta_pct = (push_optout_rate_{os}_current - push_optout_rate_{os}_previous) / push_optout_rate_{os}_previous * 100
 # Source: /api/reports/optouts (rate denominator = /api/reports/sends)
 # (a device can opt out without opening the push → denominator is sends)
+# The alert correlates BOTH: the raw count must rise materially AND the per-send rate
+# must worsen. When sends grow proportionally (rate flat/down), the rise is volume-driven → suppressed.
 
 # Direct response rate (tracking-health signal)
 direct_response_rate_{os}_current  = direct_{os}_current  / push_sends_{os}_current  * 100
@@ -1384,7 +1390,7 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `app_opens_drop_{os}` | app_opens_{os}_delta_pct ≤ −app_opens_drop_pct **OR** abs(app_opens_ios_delta_pct − app_opens_android_delta_pct) > app_opens_cross_os_gap_pts (when the gap fires, alert **both** iOS and Android) |
 | `timeinapp_drop_{os}` | timeinapp_{os}_delta_pct ≤ -timeinapp_drop_pct |
 | `push_sends_drop_{os}` | push_sends_{os}_delta_pct ≤ -push_sends_drop_pct |
-| `push_optouts_rise_{os}` | push_optouts_{os}_delta_pct ≥ optouts_rise_pct |
+| `push_optouts_rise_{os}` | push_optouts_{os}_delta_pct ≥ optouts_rise_pct **AND** push_optout_rate_{os}_delta_pct ≥ optout_rate_rise_pct (raw-count rise correlated with a real per-send rate worsening; a volume-driven rise where the rate is flat/down is **suppressed**) |
 | `direct_response_low_{os}` | direct_response_rate_{os}_current < direct_response_rate_min |
 | `direct_response_collapse_{os}` | direct_rate_drop_pct_{os} ≥ direct_response_collapse_pct |
 | `optins_drop_{os}` | optins_{os}_delta_pct ≤ -optins_drop_pct |
@@ -1503,6 +1509,24 @@ window with no send is normal cadence, not an incident. Only a **normally-daily*
 sender (`ratio ≥ cadence_daily_ratio`) going silent raises an alert, and it still
 passes through the confirm-runs gate above.
 
+**Volume-driven opt-out suppression.** A `push_optouts_rise_{os}` breach is
+correlated with the per-send RATE **before** it can become a candidate:
+
+```
+rate_delta = push_optout_rate_{os}_delta_pct   # (rate_current - rate_previous) / rate_previous * 100
+
+if push_optouts_{os}_delta_pct ≥ optouts_rise_pct AND rate_delta < optout_rate_rise_pct:
+    suppress → NOT even a candidate; log "suppressed: volume-driven opt-outs
+    (raw +{raw}%, rate {rate_prev}%→{rate_cur}% = {rate_delta}%, sends {+/-S}%)"
+```
+
+Rationale: when the audience grows and send volume rises, the absolute opt-out
+count rises mechanically. If the **rate per send** stays flat or falls, engagement
+is not degrading — this is expected and must not alert (e.g. a broadcaster doing
+seasonal blasts). Only a breach where the raw count rose **and** the per-send rate
+also worsened (`rate_delta ≥ optout_rate_rise_pct`) becomes a candidate and passes
+through the confirm-runs gate.
+
 **Muted keys short-circuit the entire gate** (evaluated first, as today): a muted
 key is never a candidate, never confirmed, never escalated.
 
@@ -1573,7 +1597,7 @@ Check whether the alert is mechanically explained by another metric on the
 | `app_opens_drop_{os}` | If triggered by cross-OS gap only → `"App opens WoW diverged: iOS {ios_delta}% vs Android {android_delta}% (gap {gap} pts > {threshold} pts threshold) — investigate platform-specific tracking, SDK, or campaign mix (source: /api/reports/opens)."` If push_sends_{os} also dropped proportionally → `"App opens drop on {os} is consistent with the -X% push send reduction on {os} (source: /api/reports/opens vs /api/reports/sends)."` |
 | `timeinapp_drop_{os}` | If app_opens_{os} also dropped → engagement-wide erosion on {os}; if opens stable → deeper in-session disengagement. Cite /api/reports/timeinapp. |
 | `direct_response_collapse_{os}` | **Prioritise tracking hypothesis**: `"Direct response rate on {os} collapsed from X% to Y% (direct / push sends, source /api/reports/responses) while sends stayed normal → most likely an attribution/SDK tracking issue on {os}, not a real engagement drop. Recommend checking SDK version / response tracking on {os}."` |
-| `push_optouts_rise_{os}` (raw) | If push_sends_{os} rose significantly → `"Raw opt-out count increase on {os} is volume-driven (push sends +X%); opt-out rate per send actually improved/worsened (source: /api/reports/optouts ÷ /api/reports/sends)."` |
+| `push_optouts_rise_{os}` | This alert now fires ONLY when the per-send RATE also worsened (volume-driven rises are suppressed by the gate). Cause must state both: `"Opt-outs on {os} +X% WoW AND the opt-out RATE per send rose from Y% to Z% (+P% WoW) despite sends {+/-S}% → genuine engagement/deliverability concern, not volume-driven (source: /api/reports/optouts ÷ /api/reports/sends)."` |
 | `optins_drop_{os}` | If push_sends_{os} or app_opens_{os} also dropped → acquisition slowed alongside lower activity on {os}. Cite /api/reports/optins. |
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
@@ -2465,9 +2489,14 @@ file:
                           current: <number>, previous: <number>,          // window totals/rates
                           deltaPct: <n|omit>, deltaPts: <n|omit>,          // WoW change (pick the one that fits the metric)
                           os: { ios: { deltaPct: <n> }, android: { deltaPct: <n> } } | null,  // omit/null when not per-OS
+                          // For opt-outs (and any raw count with a correlated ratio): the per-send RATE.
+                          // The opt-out alert fires only when BOTH the raw count and this rate rise;
+                          // a volume-driven rise (rate flat/down) is suppressed (Step 8a). Omit if n/a.
+                          rate: { current: <n>, previous: <n>, deltaPct: <n> } | { note: "<qualitative>" } | omit,
+                          note: "<one-line caption, e.g. why a rise was suppressed>" | omit,
                           threshold: { key: "<threshold key>", value: <effective number>,
                                        kind: "drop|rise|floor|ceiling|gap",
-                                       headroom: <number>,                 // distance to breach (see below)
+                                       headroom: <number|omit>,            // distance to breach (see below); omit if not computable
                                        breaching: <true|false> },
                           status: "ok|candidate|confirmed|muted|na",       // na = below min volume
                           series: [ { t: "<YYYY-MM-DD>", v: <number> }, … ] }, … ],  // newest last, ≤12

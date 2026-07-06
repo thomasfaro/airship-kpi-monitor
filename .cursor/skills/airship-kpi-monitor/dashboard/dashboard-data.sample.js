@@ -34,6 +34,13 @@
  * split, a threshold block with signed `headroom` (positive = safe margin,
  * negative = breaching) driving the headroom gauge, a confirmation `status`, and
  * a bounded `series` for the mini-sparkline. See SKILL.md Step 13.
+ *   - `rate` (optional) carries a correlated ratio alongside a raw-count metric,
+ *     e.g. opt-outs: { current, previous, deltaPct } as the per-send rate
+ *     (opt-outs ÷ sends × 100), or { note } when only a qualitative read exists.
+ *     The opt-out alert fires only when BOTH the raw count and this rate rise
+ *     (a volume-driven rise with a flat/down rate is suppressed — SKILL.md Step 8a).
+ *   - `note` (optional) is a one-line caption shown on the card (e.g. why a rise
+ *     was suppressed).
  *
  * `thresholdSuggestions` (optional, per project) are skill-computed tuning hints
  * (loosen/tighten) with a basis (volatility | false_positives | headroom), a one
@@ -134,6 +141,20 @@ window.AIRSHIP_KPI_DATA = {
               series: [
                 { t: "2026-06-18", v: 1180 }, { t: "2026-06-19", v: 1150 }, { t: "2026-06-20", v: 1120 },
                 { t: "2026-06-21", v: 1080 }, { t: "2026-06-22", v: 1020 }, { t: "2026-06-23", v: 990 }, { t: "2026-06-24", v: 980 },
+              ],
+            },
+            {
+              // Volume-driven opt-out rise: raw count up, but the per-send RATE fell
+              // (sends grew faster) → alert suppressed by the rate-correlation gate.
+              key: "optouts_ios", label: "Opt-outs (iOS)", group: "push", channel: "push", unit: "count",
+              current: 44000, previous: 32000, deltaPct: 37.5,
+              rate: { current: 4.5, previous: 5.4, deltaPct: -16.7 },
+              threshold: { key: "optout_rate_rise_pct", value: 15, kind: "rise", headroom: 31.7, breaching: false },
+              status: "ok",
+              note: "Raw +37.5% but rate/send 5.4%→4.5% (sends +65%) — volume-driven, suppressed.",
+              series: [
+                { t: "2026-06-18", v: 5800 }, { t: "2026-06-19", v: 6100 }, { t: "2026-06-20", v: 6400 },
+                { t: "2026-06-21", v: 6300 }, { t: "2026-06-22", v: 6500 }, { t: "2026-06-23", v: 6600 }, { t: "2026-06-24", v: 6300 },
               ],
             },
             {
