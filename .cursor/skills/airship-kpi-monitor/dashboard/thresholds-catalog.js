@@ -25,6 +25,7 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "id": "sms", "label": "SMS" },
     { "id": "custom", "label": "Custom events" },
     { "id": "minvol", "label": "Minimum volumes (anti false-positive)" },
+    { "id": "confirm", "label": "Alert confirmation gate (anti false-positive)" },
     { "id": "insights", "label": "Weekly insights — top campaigns" }
   ],
   "items": [
@@ -73,6 +74,12 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "key": "min_sms_sends", "label": "Min SMS sends", "group": "minvol", "unit": "", "default": 100, "hint": "Skip SMS sends thresholds if prev 7d SMS sends < X" },
     { "key": "min_sms_dispatched", "label": "Min SMS dispatched", "group": "minvol", "unit": "", "default": 50, "hint": "Skip SMS delivery-rate threshold if prev 7d dispatched < X" },
     { "key": "min_web_sends", "label": "Min web push sends", "group": "minvol", "unit": "", "default": 100, "hint": "Skip web push threshold if prev 7d web sends < X" },
+
+    { "key": "alert_confirm_runs", "label": "Confirm after N runs", "group": "confirm", "unit": "", "default": 2, "hint": "Consecutive breaching runs before a breach is CONFIRMED (candidate -> confirmed). Urgent metrics confirm in 1, noisy ones in 3 (see SKILL.md Step 8a)" },
+    { "key": "alert_resolve_runs", "label": "Resolve after N runs", "group": "confirm", "unit": "", "default": 2, "hint": "Consecutive non-breaching runs before a confirmed alert resolves (hysteresis prevents flapping)" },
+    { "key": "alert_escalate_runs", "label": "Escalate after N runs", "group": "confirm", "unit": "", "default": 3, "hint": "Confirmed + critical + streak >= X -> eligible for a throttled Slack escalation (Step 10)" },
+    { "key": "escalate_throttle_days", "label": "Escalation throttle (days)", "group": "confirm", "unit": "", "default": 7, "hint": "Min days between two Slack escalation posts for the same alert key" },
+    { "key": "cadence_daily_ratio", "label": "Daily-sender cadence ratio", "group": "confirm", "unit": "", "default": 0.6, "hint": "Min active-send-day ratio (trailing 28d) to treat a channel as a daily sender; below this a zero-send window is expected -> zero-send drop suppressed" },
 
     { "key": "min_campaign_sends", "label": "Min campaign sends (30d)", "group": "insights", "unit": "", "default": 1000, "hint": "Ignore a campaign identity below X sends over 30d (top-campaigns section)" },
     { "key": "min_recurring_occurrences", "label": "Min recurring occurrences", "group": "insights", "unit": "", "default": 3, "hint": "Min occurrences to treat a series as automated/recurring" },

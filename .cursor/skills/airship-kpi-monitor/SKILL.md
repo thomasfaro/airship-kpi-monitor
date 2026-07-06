@@ -5,15 +5,20 @@ description: >-
   per OS (iOS / Android). Detects significant variations in app opens, time in
   app, push sends/opt-outs, direct response rate (tracking-health signal),
   opt-in velocity, email metrics (including daily spam complaint and delay
-  rates), web push, SMS sends and delivery rate, and custom events. Posts Slack
-  alerts to a client channel and maintains a strategic weekly Slack canvas:
-  verbose alert analysis, an executive recap with brand-activity context, global
-  opt-in/devices vs market benchmarks, 3-month trends (app opens, sends per
-  platform, marketing pressure, opt-in rate, time-in-app), 30-day email
-  deliverability health, and top campaigns by type (one-shot / recurring /
-  experiment) via the Activity Log plus a unicast estimate. Uses the Airship
-  Reports API via MCP and the Slack MCP plugin. Triggered from Cursor chat
-  (one-off or /loop recurring).
+  rates), web push, SMS sends and delivery rate, and custom events. A
+  multi-run confirmation gate + hysteresis + cadence-aware suppression removes
+  false positives: a breach must persist across runs before it counts. Daily
+  alert tracking lives in the local dashboard (candidates with a streak, confirmed
+  alerts with context, a recently-resolved log) — Slack stays quiet except a rare,
+  throttled critical escalation and a light weekly recap (top one-shot + unicast
+  campaigns with previews, plus an aggregate in-app activity block). Maintains the
+  unchanged strategic weekly Slack canvas: verbose alert analysis, an executive
+  recap with brand-activity context, global opt-in/devices vs market benchmarks,
+  3-month trends (app opens, sends per platform, marketing pressure, opt-in rate,
+  time-in-app), 30-day email deliverability health, and top campaigns by type
+  (one-shot / recurring / experiment) via the Activity Log plus a unicast estimate.
+  Uses the Airship Reports API via MCP and the Slack MCP plugin. Triggered from
+  Cursor chat (one-off or /loop recurring).
 model: claude-sonnet
 # Always use the latest available Claude Sonnet version in the Cursor
 # Automations editor — do not pin a specific version number (e.g. 4-5, 4-6).
@@ -26,8 +31,12 @@ model: claude-sonnet
 Monitor an Airship project's key metrics daily, comparing the **last 7 complete
 days (D-7 → D-1)** against the **previous 7 days (D-14 → D-8)**. App and push
 KPIs are analysed **per OS (iOS / Android)** so a single-platform regression is
-never masked by the other platform's volume. Post a Slack alert only when a new
-anomaly is detected (anti-duplication via canvas state).
+never masked by the other platform's volume. A breach must clear the
+**confirmation gate** (persist `alert_confirm_runs` runs, Step 8a) before it
+counts as a real alert — this is what removes the transient false positives. All
+alert tracking (candidates, confirmed, recently resolved) lives in the **local
+dashboard**; the Slack channel stays quiet, receiving only a rare **throttled
+critical escalation** (Step 10) and a light **weekly recap** (Step 10b).
 
 The **week-over-week comparison drives alerting only** — it is **not** rendered
 in the Slack canvas. The canvas is a **strategic report**: open alerts (with
@@ -62,10 +71,11 @@ market benchmarks in the canvas (Step 7b / Step 11). It is auto-deduced from
 `all_verticals` when unknown.
 
 `Run scope` selects how much of the workflow to execute (see **Run scopes**):
-`full` (default — fetch + alerts + canvas + local views), `canvas-only` (refresh
-the Slack canvas only, including the weekly insight sections, with **no** Slack
-alert/resolution posts), or `alerts-only` (the light daily run: alerts + canvas
-KPI tables, but skip the heavy weekly insight sections).
+`full` (default — fetch + confirmation gate + canvas + local views + any critical
+escalation / weekly recap), `canvas-only` (refresh the Slack canvas only,
+including the weekly insight sections, with **no** Slack posts at all), or
+`alerts-only` (the light daily run: confirmation gate + canvas KPI tables + local
+dashboard, but skip the heavy weekly insight sections).
 
 `Brand name` is the **public-facing brand** used for web searches and news
 lookups in root cause analysis (Step 8b). Use the consumer-facing name rather
@@ -121,8 +131,11 @@ Always state the time zone next to any hour you show so the value is unambiguous
 
 ### Slack canvas link (`canvas_url`)
 
-Every alert and resolution message must link to the KPI canvas with a URL that
-**opens the canvas in Slack**. Build it at the start of each run:
+The two Slack posts (the critical escalation, Step 10, and the weekly recap,
+Step 10b) must link to the KPI canvas with a URL that **opens the canvas in
+Slack**. (There is **no** resolution post — resolutions live only in the
+dashboard's recently-resolved log and the canvas Open Alerts table.) Build the
+URL at the start of each run:
 
 ```
 canvas_url = https://{slack_workspace}.slack.com/docs/{slack_team_id}/{canvas_id}
@@ -175,17 +188,18 @@ Detect the scope from the prompt; default to `full`.
 
 | Scope | Trigger words in the prompt | What runs |
 |---|---|---|
-| `full` (default) | normal invocation, "run airship-kpi-monitor" | Steps 0–13: fetch + weekly insights (gated, Step 7b) + alerts (Steps 9–10) + canvas (Step 11) + local views (Steps 12–13). |
-| `canvas-only` | `canvas`, `canvas-only`, "update canvas only", "canvas refresh" | Steps 0–7 + **7b forced** + Step 8 alert **computation** + Step 11 (Slack canvas). **Skips** Steps 9–10 (no Slack alert/resolution posts) and, by default, Steps 12–13 (local views). |
-| `alerts-only` | `alerts-only`, "alerts only", "light run", "skip insights" | The light daily run: Steps 0–13 **but skip Step 7b** (no heavy weekly insight sections). Keeps the canvas KPI tables and alerts current. |
+| `full` (default) | normal invocation, "run airship-kpi-monitor" | Steps 0–13: fetch + weekly insights (gated, Step 7b) + confirmation gate (Step 8a) + classify (Step 9) + **critical escalation** (Step 10) + **weekly recap** (Step 10b, gated) + canvas (Step 11) + local views (Steps 12–13). |
+| `canvas-only` | `canvas`, `canvas-only`, "update canvas only", "canvas refresh" | Steps 0–7 + **7b forced** + Step 8/8a alert **computation** + Step 11 (Slack canvas). **Skips** Steps 9–10b (no Slack posts of any kind) and, by default, Steps 12–13 (local views). |
+| `alerts-only` | `alerts-only`, "alerts only", "light run", "skip insights" | The light daily run: Steps 0–13 **but skip Step 7b** (no heavy weekly insight sections; no weekly recap, which depends on 7b data). Keeps the canvas KPI tables, the confirmation gate, and the local dashboard current. |
 
 **`canvas-only` behaviour (detailed):**
 - Run Steps 0–7 (fetch + read canvas) and **force** the weekly insight block
   (Step 7b: 3-month history, benchmark metrics, top campaigns) regardless of the
   weekly gate — refreshing those sections is the whole point of the command.
-- Run Step 8 to **compute** the current alert state (so the canvas "Open Alerts"
-  table is accurate) but do **not** post anything: **skip Step 9** (anti-dup) and
-  **skip Step 10** (Slack messages). No Slack post other than the canvas update.
+- Run Step 8/8a to **compute** the current alert state (so the canvas "Open Alerts"
+  table is accurate) but do **not** post anything: **skip Step 9** (classify),
+  **Step 10** (escalation) and **Step 10b** (weekly recap). No Slack post other
+  than the canvas update.
 - **Skip Steps 12–13** (Cursor canvas + HTML dashboard) by default — this command
   only touches the Slack canvas. Include them only if the prompt adds `+local`.
 - Read-only on mutes: use the muted state for display; do not sync mutes from the
@@ -267,8 +281,9 @@ operate in registry mode:
 
 8. **Update the local views** once at the end: rewrite the Cursor canvas
    (Step 12) and the local HTML dashboard data file (Step 13), rolling up every
-   processed client's open alerts, last-run time, and Slack canvas link.
-   (Skipped for `canvas-only` runs unless `+local` was requested.)
+   processed client's confirmed alerts, candidates, recently-resolved, last-run
+   time, industry, and Slack canvas link. (Skipped for `canvas-only` runs unless
+   `+local` was requested.)
 
 ## Muting false positives
 
@@ -326,13 +341,13 @@ mutes only that one event while `custom_event_rise` mutes every custom-event ris
 
 ### Enforcement (during a run)
 
-In **Step 9**, before classifying a triggered alert as new/ongoing/resolved,
-check it against the merged mute set (`clients.yml` `muted_alerts` ∪ any
-canvas rows already marked `Muted`). If it matches, classify it **Muted**:
-never add it to "alerts to post" nor "resolutions to post"; still record it on
-the canvas with `last_seen` updated and `Status = Muted`. Muted alerts are
-excluded from any "worst severity" used to summarise active alerts, but remain
-visible everywhere with their reason.
+In **Step 8a / Step 9**, before a breach can become a candidate/confirmed alert,
+check it against the merged mute set (`clients.yml` `muted_alerts` ∪ any canvas
+rows already marked `Muted`). If it matches, classify it **Muted**: it never
+becomes a candidate, is never confirmed, and is never escalated to Slack; still
+record it on the canvas with `last_seen` updated and `Status = 🔕 Muted`. Muted
+alerts are excluded from any "worst severity" used to summarise active alerts, but
+remain visible everywhere with their reason.
 
 ### Mute reasons as accumulated intelligence (later analyses)
 
@@ -429,7 +444,7 @@ denominator used.**
 | Benchmark — opt-in rate (per device family) | `/api/reports/devices` (snapshot) + `benchmarks/benchmarks.json` | `opted_in / unique` per `ios`/`android`/`web` vs vertical p10/p50/p90 |
 | Benchmark — direct & influenced open rate (per device family) | `/api/reports/responses` + `benchmarks/benchmarks.json` | `direct \| influenced / sends` per OS vs vertical percentiles |
 | Benchmark — push sends/user/month (per device family) | `/api/reports/sends`, `/api/reports/devices` + `benchmarks/benchmarks.json` | 30d sends / opted-in (×4.33 if from a weekly), vs vertical percentiles |
-| Top campaigns by type & platform (30d, weekly insights) | `/api/reports/activity/details` (typology: `type` PUSH = one-shot \| GROUP = recurring/automation, `experiment` flag, per-push delivery/interaction), `/api/reports/perpush/detail/{push_id}` (per-platform split), `/api/reports/perpush/pushbody/{push_id}` (`message_name`, `campaigns.categories`, `message_type`, `audience`) | one row per real campaign — unicast 1:1 sends excluded by the log; `message_name`/categories only — never message body/HTML |
+| Top campaigns by type & platform (30d, weekly insights) | `/api/reports/activity/details` (typology: `type` PUSH = one-shot \| GROUP = recurring/automation, `experiment` flag, per-push delivery/interaction), `/api/reports/perpush/pushbody/{push_id}` (channel + metadata), `/api/reports/events/summary/perpush/{push_id}` (**email volume + open/click** — activity log often shows `delivery.app=0` for email), `/api/reports/perpush/detail/{push_id}` (push/in-app **per-platform split only** — returns `sends=0` for email) | one row per real campaign — unicast 1:1 sends excluded by the log; canvas = metadata only; weekly recap may preview hero + snippet (7b.6) |
 | Unicast / transactional volume (weekly insights) | `/api/reports/sends` minus campaign delivery from `/api/reports/activity/details`; `/api/reports/perpush/pushbody/{push_id}` (empty body confirms unicast) | aggregate estimate of 1:1 API-triggered sends; content not retrievable (best-effort) |
 | Brand activity context (weekly insights) | campaign `message_name` + `campaigns.categories` (pushbody) + best-effort web search on `Brand name` news | qualitative; clearly labelled best-effort, never alert |
 
@@ -437,6 +452,22 @@ denominator used.**
 drive alerts (a collapse of the direct rate signals a tracking/SDK problem, not a
 real engagement change). `influenced` **is** read in the weekly benchmark section
 (Step 7b) because the Airship benchmark exposes an influenced-open-rate band.
+
+### Campaign content & privacy policy
+
+Two different rules apply depending on where campaign content is surfaced:
+
+- **Slack canvas — metadata only.** The canvas **🏆 Top campaigns** section stays
+  strictly metadata (`message_name`, categories, `message_type`, platform, volume,
+  direct-open) — **never** the alert title/body/HTML. The canvas structure is
+  unchanged.
+- **Weekly recap preview — text wording allowed.** The weekly recap (Step 10b)
+  **may** surface a campaign **text preview**: the **title / subject / short body**
+  extracted via the 7b.6 extractor (rendered as a blockquote). This is a deliberate
+  relaxation of the old "metadata only" rule so the recap is useful. **No images**
+  are posted. Still **never** expose recipient PII, tokens, unicast 1:1 bodies
+  (empty anyway), or full raw HTML — only a truncated wording snippet, for the
+  ranked one-shot shortlist only.
 
 ## Execution workflow
 
@@ -645,12 +676,12 @@ actual delay rate) but do **not** contribute to the alert. The per-day detail
 always remains visible in the `## 📧 Email deliverability health — history` table;
 the Open Alerts list keeps just the one rolled-up row.
 
-### Step 3c — Email delay drill-down (only when `email_delay_high` is a new alert)
+### Step 3c — Email delay drill-down (only when `email_delay_high` is newly confirmed)
 
-Run this step **only** when the single `email_delay_high` alert is in the
-**alerts to post** list (new alert — not ongoing, not resolution). Run the
+Run this step **only** when the single `email_delay_high` alert is **newly
+confirmed** this run (`confirmed_new` from Step 8a — not ongoing). Run the
 drill-down for each day in `confirmed_delay_days` (typically focus on the
-**peak** day for the Slack narrative; list the others compactly).
+**peak** day for the canvas/escalation narrative; list the others compactly).
 
 **The hourly breakdown was already fetched in Step 3b.5** (`delay_hourly_breakdown[D]`).
 Do **not** re-fetch it. Proceed directly to Step 3c.2 (campaign correlation).
@@ -896,11 +927,32 @@ pagination tiny (typically a few rows/day) and gives the typology for free.
      = one-shot** (everything else)
    - `experiment` (bool) — **A/B test / experimentation**
    - `details.delivery.app.{alerting,silent,rich}` and `details.delivery.web.total`
-     → **delivery volume** (app = alerting+silent+rich; web = total)
-   - `details.interaction.app.{direct,influenced}` → engagement (`-1` = not
+     → **push/in-app/web delivery** (app = alerting+silent+rich; web = total).
+     **Email blasts often show 0 here** even when they delivered — do not treat
+     that as proof of a non-campaign (see step 2b).
+   - `details.interaction.app.{direct,influenced}` → push engagement (`-1` = not
      measured; never treat as 0)
-2. **Drop empty rows** (delivery 0 everywhere) — non-delivering schedules or
-   canceled sends, not campaigns.
+2. **Compute activity delivery** per row:
+   `activity_delivery = app.alerting + app.silent + app.rich + web.total`.
+   Rows with `activity_delivery > 0` use it as provisional `delivery` for ranking.
+2b. **Email probe before dropping zeros (mandatory).** Rows with
+   `activity_delivery == 0` are **not dropped yet** — they may be email (or other
+   non-app) campaigns the activity log does not populate under
+   `details.delivery.app`. For **each** such row only:
+   - `GET /api/reports/perpush/pushbody/{push_id}` → cache decoded JSON (7b.6).
+     Treat as **email** when `push.device_types` includes `"email"` **or**
+     `push.notification.email` is present.
+   - When email: `GET /api/reports/events/summary/perpush/{push_id}` → from the
+     `events[]` list with `location=custom`, read counts by `name`:
+     **`injection` → sends**, **`delivery` → delivery** (denominator for rates),
+     **`open` → opens** (fallback: `initial_open`; label "(initial open)" when
+     `open` absent), **`click` → clicks**. If `delivery > 0`, **retain** the row,
+     set `channel = email`, and use these per-push figures for ranking and step 8.
+     If `delivery == 0` after the per-push probe, drop (canceled / not yet sent).
+   - When not email and `activity_delivery == 0`: drop (non-delivering schedule /
+     canceled send).
+   **Cost control:** `events/summary/perpush` only for rows confirmed email by
+   pushbody — never for every activity row.
 3. **Classify each row** into one bucket (priority order):
    `experiment` (experiment == true) → `recurring` (type == GROUP) →
    `one_shot` (type == PUSH). Optionally fold repeated one-shots sharing a
@@ -911,26 +963,95 @@ pagination tiny (typically a few rows/day) and gives the typology for free.
    (occurrences + total delivery + trend) so a journey appears once, not dozens of
    times.
 5. **Resolve names + categories** only for the ranked top entries (not every row):
+   reuse cached pushbody from step 2b when present; otherwise
    `GET /api/reports/perpush/pushbody/{push_id}` → base64-decode `push_body` →
    `options.message_name`, `campaigns.categories[]`, `campaigns.message_type`
    (commercial / transactional), `device_types`, and the `audience` selector.
-   **Only metadata** — never surface the alert title/body/HTML as message content.
-   A non-empty pushbody confirms a real campaign; an **empty** pushbody marks a
-   unicast/triggered send (handled in 7b.4).
-6. **Per-platform split** for ranked entries: `GET /api/reports/perpush/detail/{push_id}`
-   → `platforms.{ios,android,web}` sends + direct/influenced. Lets the canvas show
-   the top campaign per platform and an OS split for the biggest ones.
+   **Metadata only for the canvas** — never surface the alert title/body/HTML in
+   the canvas top-campaigns section. (The **weekly recap** may show a text preview —
+   title / subject / short body, **no images** — via the 7b.6 extractor; see the
+   **Campaign content & privacy policy**.) A non-empty pushbody confirms a real
+   campaign; an **empty**
+   pushbody marks a unicast/triggered send (handled in 7b.4).
+6. **Per-platform split** for ranked **push/in-app** entries only:
+   `GET /api/reports/perpush/detail/{push_id}` → `platforms.{ios,android,web}`
+   sends + direct/influenced. **Skip for email** — `/api/reports/perpush/detail`
+   is mobile-centric and returns `sends=0` for email blasts; email volume and
+   engagement come from step 2b / `events/summary/perpush` instead.
 7. **Anti-false-positive guards:**
    - Exclude **test** sends (`options.test`).
    - Apply the per-platform floor `min_campaign_sends`; entries below it are
      ignored.
-   - Mark open/CTR **non-significant ("n/s")** below a volume floor instead of a
-     noisy rate.
+   - Mark open/CTR **non-significant ("n/s")** below the **volume floor**
+     `min_campaign_sends` (default **1000** delivered) instead of a noisy rate.
    - Show a platform only if it is active for the project.
    - Require ≥ `min_recurring_occurrences` occurrences before labelling a series
      recurring; otherwise treat as one-shot.
    - For recurring, compute **volume drift** = latest occurrence vs series median;
      flag when it exceeds `recurring_drift_pct`.
+8. **Per-campaign volume, engagement & benchmark band** (computed for the ranked
+   **top one-shot** entries only — the shortlist reused by Step 10b / Step 11;
+   never for every row). For each shortlisted campaign, derive:
+   - **Volume** — `sends` (audience targeted) and `delivery`. For **push/in-app**,
+     `delivery = details.delivery.app.alerting` from `/api/reports/activity/details`
+     (the denominator for all push rates); per-platform delivery/interaction from
+     `/api/reports/perpush/detail/{push_id}` when an OS split is needed.
+     For **email**, **`/api/reports/perpush/detail` is not used** — take
+     `sends = injection` and `delivery = delivery` from the step **2b**
+     `events/summary/perpush` response (already fetched for probed rows; fetch
+     now for any ranked email row not probed earlier).
+   - **Engagement, per channel** — only when the numbers are real:
+     - **Push / in-app:** `direct_open_rate = interaction.app.direct / delivery`
+       and `influenced_open_rate = interaction.app.influenced / delivery` (both
+       already fetched per push; `-1` = not measured → treat as unavailable, never 0).
+     - **Email:** `open_rate = open / delivery * 100` and
+       `click_rate = click / delivery * 100` from **`/api/reports/events/summary/perpush/{push_id}`**
+       (mandatory for email — never infer from activity log or `perpush/detail`).
+       Prefer `open`; if absent use `initial_open` and note "(initial open)".
+       If `delivery < min_campaign_sends`, show volume but rate `n/s`. Email is also
+       compared to the **internal email baseline** (see the dedicated bullet below).
+     - **Message center / SMS:** whatever is resolvable (often only sends); mark
+       engagement `n/a` when not available.
+   - **Internal email baseline (email's "benchmark").** There is **no Airship email
+     open/click benchmark**, so email campaigns are judged **against the client's
+     own email average** over the same window. Compute once per run from the Step 2
+     `events_current` email system events (`location=custom`):
+     ```
+     client_email_open_rate  = Σ open  / Σ delivery * 100
+     client_email_click_rate = Σ click / Σ delivery * 100
+     ```
+     (use `initial_open` for the numerator if `open` is absent, consistently for
+     both the baseline and the per-campaign rate). For each shortlisted email
+     campaign, report its open/click **vs this baseline** as a signed delta in
+     points with an arrow (**▲** above / **▼** below the client's own average). Skip
+     the comparison cleanly if the project sent no other email that window
+     (baseline undefined) — then just show the campaign's own rate.
+   - **Volume-floor honesty (`n/s`):** if `delivery < min_campaign_sends`, keep the
+     **volume** but render the rate as **`n/s`** and **do not** compute a benchmark
+     band. Never show a rate the volume can't support.
+   - **Benchmark band (push only):** compare the campaign's **direct open rate**
+     against the vertical's **`direct_open_rate`** percentiles in
+     `benchmarks/benchmarks.json` (the same source the canvas benchmark table cites,
+     Step 7b.2). Because a campaign's app delivery blends OSes, use as the reference
+     the **delivery-weighted blend of the per-OS `p10`/`p50`/`p90`** (weight each
+     OS's percentiles by that OS's share of the campaign's app delivery from
+     `perpush/detail`; when only one OS is active it is simply that OS's band — this
+     matches the campaign's real audience mix without blending *client* metrics
+     across OSes in the canvas table). Resolve the vertical exactly as Step 7b.2
+     (project `industry`, else `all_verticals`). Band = **`low` (≤ p10) /
+     `med` (≈ p50) / `high` (≥ p90)** — the same convention used everywhere:
+     **🔴 Low ≤ p10 · 🟡 Medium ≈ p50 · 🟢 High ≥ p90**. Benchmark reads are
+     **Medium confidence** at most.
+   - **No push benchmark for a channel:** **email** uses the **internal baseline**
+     above (▲/▼ vs the client's own average), not a push band. **SMS / message
+     center** have no benchmark at all — show the engagement value (when real)
+     labelled **"no benchmark"**; never borrow the push band or invent one. If the
+     resolved vertical has no `direct_open_rate` entry at all, treat push the same
+     way (value shown, "no benchmark").
+   - **Be honest / degrade gracefully:** engagement and the band appear **only when
+     the underlying numbers are real** (delivery ≥ floor, metric measured, benchmark
+     present). Otherwise show the volume and `n/s` / `n/a` / "no benchmark" as
+     appropriate — never a fabricated rate or band.
 
 New tunable thresholds (defaults below; overridable in `clients.yml`
 `custom_thresholds` and mirrored in `dashboard/thresholds-catalog.js`):
@@ -971,6 +1092,67 @@ Synthesize a short **narrative** (3–6 sentences, bold key numbers) for the
   Label it **"contextual — best-effort"**, cap any causal claim at **Medium
   confidence**, and clearly separate measured data from inferred context. Never
   block or fail the run if web search is unavailable — omit the link cleanly.
+
+#### 7b.6 — Campaign content extractor (optimized, shortlist-only)
+
+The weekly recap (Step 10b) shows a small **text preview** of the top campaigns
+(title / subject / body — **no images**). Campaign `push_body` payloads are
+**base64-encoded JSON** and can be large (a full HTML email is easily > 100 KB), so
+extraction must be **cheap and channel-aware**. This subsection is the single,
+reusable extractor Step 10b calls. The extractor can also return a `hero_image`,
+but the Slack recap is **text-only** and does not use it — surface `title`, the
+email `subject`, and the `snippet`/`body` text.
+
+**Cost controls (mandatory):**
+- **Shortlist only.** Fetch `perpush/pushbody` **only** for the ranked entries
+  that will actually be shown (the top one-shot + unicast previews in Step 10b —
+  typically ≤ 6 campaigns), never for every campaign.
+- **Decode once, cache per run.** Keep a `pushbody_cache[push_id] → decoded JSON`
+  and a `perpush_events_cache[push_id] → events/summary/perpush response` for the
+  whole run so 7b.3 and 10b never re-fetch or re-decode the same id.
+- **Bounded HTML parse.** For HTML bodies, **strip `<head>`, `<style>`,
+  `<script>`, and comments first**, then scan the **cleaned body** for the hero
+  image and the text snippet. (Scanning only the raw first ~8 KB fails on real
+  emails whose leading `<style>` block pushes the first `<img>` past the window —
+  this was observed live on M6 emails.)
+
+**Decode:** `decoded = json.loads(base64decode(push_body))`. Then branch on the
+channel. Field paths below are **validated live** (Carrefour push+MC, Libon SMS +
+in-app scene, M6 email + push + in-app automation):
+
+| Channel | Hero media | Text snippet |
+|---|---|---|
+| **Push** | iOS `notification.ios.media_attachment.url`; Android `notification.android.style.big_picture`; Web `notification.web.image` / `notification.web.icon` | `notification.alert` (or per-platform `notification.{ios,android}.alert`) |
+| **Email** | first `<img src>` (or CSS `background-image:url(...)`) in the **cleaned** HTML under `push.message.body` **or** `push.notification.email.template.fields.html_body` | `push.message.subject` **or** `push.notification.email.template.fields.subject`, else first ~200 chars of cleaned HTML text |
+| **Message center** | inbox icon `message.icons.list_icon`; hero = first `<img>` in cleaned `message.template.fields.html_body` (or `message.body`) | `message.title` + first ~200 chars of cleaned body text |
+| **SMS** | none | `notification.sms.template.fields.alert` — **multilingual Handlebars** (`{{#eq language "fr"}}…{{/eq}}`); resolve the default / `fr` branch and strip the Handlebars tags |
+| **In-app modal** (legacy) | `in_app_message.message.display.media.url` | `in_app_message.message.display.body.text` + `display.buttons[].label.text` |
+| **In-app scene / layout** | recursive collector: first node with `type ∈ {"media","image"}` → its `url` (resolving any `references` block that stores the actual URL) | first `type:"text"` node's `text`; `reporting_context.content_types` is typically `["scene","branching"]` |
+
+**Channel detection:** infer from which block is present — `push.device_types`
+includes `"email"` or `push.notification.email` → email; `in_app_message` or a
+`layout`/scene structure → in-app; `notification.sms` → SMS;
+`message.template`/`message.icons` → message center; `push.message.body` (HTML) →
+email (legacy path); otherwise `notification.{ios,android,web}` → push. A single
+campaign can carry several (e.g. push + message center) — extract each present
+channel. When both activity delivery and push/in-app blocks are absent but email
+is detected, the row is still a valid campaign (volume from
+`events/summary/perpush`, step 2b).
+
+**Recursive media collector** (for scenes and nested layouts): walk the decoded
+object; collect any string value under a key in {`url`, `media_url`,
+`background_image`, `image`, `src`} that looks like an `https://` media URL, plus
+resolve `references`/`content` id→url maps. Return the first usable image.
+
+**Privacy:** text previews (title / subject / short snippet) **are** allowed for
+the recap (see the relaxed policy in **Data sources** / Step 10b). **No images are
+posted** — the extractor may still compute `hero_image`, but the recap ignores it.
+Never expose raw recipient data, tokens, or unicast 1:1 bodies (those come back
+empty anyway).
+
+**Optional helper:** `scripts/extract_pushbody.py` implements exactly this
+(decode + channel-aware extraction + bounded HTML parse) as a reusable convenience
+— agents may call it or inline the logic. It is **not** required to run the skill.
 
 ### Step 8 — Compute deltas and evaluate thresholds
 
@@ -1045,6 +1227,14 @@ min_timeinapp: 1                # skip time-in-app threshold if prev avg < 1
 min_sms_sends: 100              # skip SMS sends thresholds if prev 7d SMS sends < 100
 min_sms_dispatched: 50          # skip SMS delivery rate threshold if prev 7d dispatched < 50
 min_web_sends: 100              # skip web push threshold if prev 7d web sends < 100
+
+# Alert confirmation gate + hysteresis (anti false-positive) — see Step 8a
+alert_confirm_runs: 2           # consecutive breaching runs before a breach is CONFIRMED (candidate → confirmed)
+alert_resolve_runs: 2           # consecutive non-breaching runs before a CONFIRMED alert resolves (hysteresis)
+alert_escalate_runs: 3          # confirmed + critical + streak ≥ this → eligible for a throttled Slack escalation (Step 10)
+escalate_throttle_days: 7       # min days between two Slack escalation posts for the same key
+cadence_daily_ratio: 0.6        # min active-send-day ratio (trailing 28d) to treat a channel as a daily sender;
+                                #   below this a zero-send window is expected cadence → zero-send drop is suppressed
 
 # Weekly insights — top campaigns (Step 7b.3; analytics only, never alert)
 min_campaign_sends: 1000        # ignore a campaign identity below this many sends over 30d
@@ -1235,10 +1425,100 @@ When both `direct_response_low_{os}` and `direct_response_collapse_{os}` fire on
 the same OS, post a single alert keyed `direct_response_collapse_{os}` (it
 implies the low rate).
 
+### Step 8a — Confirmation gate, hysteresis & cadence-aware suppression
+
+**This is the core false-positive fix.** A threshold breach from Step 8 is no
+longer an alert on its own — it must **persist across runs** to be *confirmed*.
+Transient one-day blips that clear on the next run never reach Slack and never
+clutter the alert tracking.
+
+**Where streak state lives.** Agents have no memory between runs, so the
+per-project **Slack canvas Open Alerts table is the source of truth** (read in
+Step 7). The gate stores its counters inside the **existing `Status` column** —
+**no new columns or sections; the canvas structure is unchanged.** Only the
+`Status` vocabulary is extended:
+
+- `🟠 Candidate {streak}/{N}` — breaching but not yet confirmed (**dashboard-only**, never posted/escalated)
+- `Active` — confirmed (unchanged)
+- `Active · clearing {k}/{M}` — confirmed but currently non-breaching, inside the resolve hysteresis
+- `🔕 Muted` — unchanged
+
+**Per-run algorithm** — for every threshold key evaluated in Step 8, reconcile it
+against its canvas row (if any):
+
+```
+confirm_runs(key) = per-metric override (below) else alert_confirm_runs   # default 2
+resolve_runs      = alert_resolve_runs                                    # default 2
+
+breached_now = Step 8 condition true for key (AFTER min-volume + cadence guards)
+prior        = canvas row for key: { state, streak, clear_streak, opened, first_breach }
+
+if breached_now:
+    streak       = (prior.streak or 0) + 1
+    clear_streak = 0
+    if prior.state == "confirmed" OR streak >= confirm_runs(key):
+        state = "confirmed"            # stays / becomes Active
+        opened = prior.opened or today # first run it reached confirmed
+    else:
+        state = "candidate"            # Status "🟠 Candidate {streak}/{confirm_runs}"
+else:                                   # not breaching this run
+    clear_streak = (prior.clear_streak or 0) + 1
+    if   prior.state == "candidate": state = "cleared"   # candidates drop immediately — never lingered, never posted
+    elif prior.state == "confirmed": state = clear_streak >= resolve_runs ? "resolved" : "confirmed"  # hysteresis
+    else:                            state = "cleared"
+```
+
+Track `first_breach` = the first candidate run for the key (drives the dashboard
+streak display); `opened` = first run it reached `confirmed` (drives the canvas
+`Opened` column and the dashboard age graph).
+
+**Per-metric `confirm_runs` overrides** (defaults — each still overridable per
+project via `clients.yml` `custom_thresholds`):
+
+- **Confirm in 1 run** (urgent, rarely a false positive — treat as confirmed as
+  soon as breached): `email_deliverability_low`, `email_bounce_high`,
+  `email_spam_complaint_high`, `email_delay_high` (already hour-confirmed in
+  Step 3b.5), `sms_delivery_rate_low`, `direct_response_collapse_{os}`.
+- **Confirm in 3 runs** (noisy / cadence-sensitive):
+  `push_sends_drop_{os}`, `email_sends_drop`, `web_sends_drop`, `sms_sends_drop`,
+  `custom_event_rise:{name}`, `custom_event_drop:{name}`, and
+  `app_opens_drop_{os}` when triggered by the **cross-OS gap only**.
+- **All others**: `alert_confirm_runs` (default 2).
+
+**Cadence-aware zero-send suppression.** A `*_sends_drop` breach that is really a
+**zero / near-zero send window** is checked against the channel's own cadence
+**before** it can even become a candidate:
+
+```
+active_day_ratio(channel) = (days with sends > 0) / (total days), trailing 28d
+   (reuse the Step 1 series; if only the 14-day window is available, use that)
+
+if breach is a zero/near-zero-send window AND active_day_ratio < cadence_daily_ratio:
+    suppress → NOT even a candidate; log "suppressed: irregular send cadence (ratio {r})"
+```
+
+Rationale: many projects legitimately send on only a few days a week (weekly
+newsletters, occasional SMS blasts, event-triggered web push). For those, a 7-day
+window with no send is normal cadence, not an incident. Only a **normally-daily**
+sender (`ratio ≥ cadence_daily_ratio`) going silent raises an alert, and it still
+passes through the confirm-runs gate above.
+
+**Muted keys short-circuit the entire gate** (evaluated first, as today): a muted
+key is never a candidate, never confirmed, never escalated.
+
+**Outputs of Step 8a** (consumed by Steps 9, 10, 11, 13):
+- `confirmed_new` — keys that reached `confirmed` **this** run (`opened == today`).
+- `confirmed_ongoing` — already-confirmed keys still breaching or clearing.
+- `candidate_alerts` — breaching, not yet confirmed (dashboard + canvas Status only).
+- `resolved_alerts` — confirmed keys that cleared the resolve hysteresis this run.
+- per-key `streak` / `clear_streak` / `opened` / `first_breach`.
+
 ### Step 8b — Root cause analysis (for each triggered alert)
 
-Run this step only for **new alerts** (not ongoing ones). For each breach,
-produce a short `possible_cause` string to include in the Slack message.
+Run this step only for **newly-confirmed alerts** (`confirmed_new` from Step 8a —
+not candidates, not ongoing ones). For each breach, produce a short
+`possible_cause` string for the canvas alert analysis (Step 11), the dashboard
+(Step 13), and any escalation message (Step 10).
 Work through the checks below in order and stop at the first that explains
 the variation. If none applies, output `"No clear cause identified"`.
 
@@ -1377,41 +1657,71 @@ Example outputs:
 - `"Email delay rate on 2026-06-23 was 6.8% (delay/delivery). Hourly peak 10–11 local / 08–09 UTC at 9.2% aligned with campaign « Newsletter » (78K sends, push_time 09:55 local / 07:55 UTC). Source: Step 3c hourly + responses/list + events/summary/perpush"`
 - `"No clear cause identified from available data. Recommend checking campaign calendar."`
 
-### Step 9 — Anti-duplication check
+### Step 9 — Classify & reconcile (dashboard-first)
 
 **Skip Steps 9 and 10 entirely on a `canvas-only` run** — that scope posts
-nothing to Slack except the canvas update (Step 11). Still compute the alert
-state in Step 8 so the canvas "Open Alerts" table is accurate.
+nothing to Slack except the canvas update (Step 11). Still compute the Step 8/8a
+state so the canvas "Open Alerts" table is accurate.
+
+> **Alerts no longer post to Slack on every run.** Daily new-alert and resolution
+> posts are **removed** (see Step 10). All alert tracking now lives in the
+> per-project **canvas Open Alerts table** (confirmed alerts, with the Step 8a
+> `Status`) **plus the local dashboard** (candidates with their streak, confirmed
+> alerts with context, and a recently-resolved log). Slack stays quiet except for
+> a rare, throttled **critical escalation** (Step 10) and the **weekly recap**
+> (Step 10b).
 
 First build the **mute set** = `clients.yml` `muted_alerts` ∪ any canvas rows
-already marked `Status = Muted` (Step 7). Then compare the set of triggered
-alert keys against the **open alerts list** read from the canvas in Step 7.
+already marked `Status = Muted` (Step 7). Then reconcile the Step 8a outputs
+against the **open alerts list** read from the canvas in Step 7:
 
-- **Muted alert** (key matches the mute set — exact key OR family, the part
-  before `:`) → classify **muted**: do NOT add to "alerts to post" nor to
-  "resolutions to post". Still record it in the canvas with `Status = Muted`,
-  its reason, and `last_seen_date` updated. Exclude it from any "worst severity"
-  used to summarise active alerts. **Evaluate this first** — a muted key never
-  becomes new/ongoing/resolved.
-- **New alert** (key not in open list, not muted) → add to "alerts to post"
-- **Resolved alert** (key was open, threshold no longer breached, not muted) →
-  add to "resolutions to post"
-- **Ongoing alert** (key still breached, already open, not muted) → do NOT post
-  again, only update `last_seen_date` in the canvas
+- **Muted** (key matches the mute set — exact key OR family, the part before
+  `:`) → **evaluate first**: never a candidate/confirmed/escalated. Record it on
+  the canvas with `Status = 🔕 Muted`, its reason, and `last_seen` updated;
+  exclude it from any "worst severity". A muted key is never posted or escalated.
+- **Candidate** (`candidate_alerts`) → record on the canvas with
+  `Status = 🟠 Candidate {streak}/{N}` and surface it in the dashboard
+  `candidatesList` (Step 13). **Never posted to Slack.**
+- **Confirmed — new** (`confirmed_new`) → canvas `Status = Active`,
+  `Opened = today`; run Step 8b (root cause); surface in the dashboard
+  `alertsList`. Eligible for a **critical escalation** only if it also passes the
+  Step 10 gate. No ordinary Slack post.
+- **Confirmed — ongoing** (`confirmed_ongoing`) → update `last_seen`; keep
+  `Status = Active` (or `Active · clearing {k}/{M}` while inside the resolve
+  hysteresis). No repeat post.
+- **Resolved** (`resolved_alerts`) → remove from the canvas Open Alerts table and
+  move it to the dashboard `resolvedRecently` log (Step 13). **No Slack
+  resolution post** — the channel stays quiet.
 
-### Step 10 — Post Slack messages
+### Step 10 — Critical escalation (throttled, rare)
 
-**Skipped on `canvas-only` runs** (see Step 9). Otherwise: **only if there are new
-alerts or resolutions to post.** Never post a message (new alert or resolution)
-for a key in the mute set — muted false positives are silent by design.
+**Skipped on `canvas-only` runs** (see Step 9). Daily new-alert and resolution
+posts are **retired** — the channel no longer gets a message on every run. The
+**only** per-run Slack post is a rare, throttled **critical escalation** for a
+sustained, confirmed, critical alert. Everything else lives in the per-project
+canvas Open Alerts table (Step 11) and the local dashboard (Step 13). The weekly
+recap is a separate, lighter post (Step 10b).
 
-All Slack alert and resolution messages are in **English** (labels, possible-cause
-text, and footnotes).
-
+All escalation text is in **English** (labels, possible-cause, footnotes).
 `{canvas_url}` — computed at run start (see **Slack canvas link** above). Example:
 `https://urbanairship.slack.com/docs/T025Q1VP7/F0XXXXXXXXX`
 
-#### New alerts message
+#### Escalation gate (ALL must hold)
+
+Add an alert key to `escalations_to_post` only when **every** condition holds:
+
+1. The key is **confirmed** (Step 8a) — never a candidate.
+2. Its severity is **critical** (🔴 / `danger`).
+3. It is **sustained**: `streak >= alert_escalate_runs` (default 3 breaching runs).
+4. It is **not muted**.
+5. **Throttle**: no escalation for this key in the last `escalate_throttle_days`
+   (default 7). The last escalation date is stored in the canvas Open Alerts
+   `Status` cell as a `· escalated {YYYY-MM-DD}` suffix (**no new column**); parse
+   it from the Step 7 read and skip if `today − last_escalated < escalate_throttle_days`.
+
+If `escalations_to_post` is empty, **post nothing this run.** When you do post,
+append `· escalated {today}` to each escalated key's canvas `Status` (Step 11) so
+the throttle holds on the next run.
 
 Use `slack_send_message` to the channel ID resolved at run start (see **Slack
 channel** above).
@@ -1420,7 +1730,8 @@ always pass `message: "..."` or the call will silently return `no_text`
 without posting.
 
 ```
-🔴 KPI Alert — {Client name} — {current_window_start} → {current_window_end}
+🔴 KPI Escalation — {Client name} — {current_window_start} → {current_window_end}
+_Critical alert confirmed and sustained ≥ {alert_escalate_runs} runs. Full alert tracking (candidates, history, resolutions) lives in the [📊 KPI Canvas]({canvas_url}) and the local dashboard._
 
 **{Section}** _(source: {endpoint})_
 | Metric              | OS       | Prev 7d          | Last 7d          | Δ                |
@@ -1432,12 +1743,12 @@ without posting.
 _(Source: Airship Reports API · [📊 KPI Canvas]({canvas_url}))_
 ```
 
-Include only triggered KPIs grouped by section (App, Engagement, Mobile Push,
+Include only **escalated** KPIs grouped by section (App, Engagement, Mobile Push,
 Acquisition, Email, Web Push, SMS, Devices, Custom Events). Do not include
-passing KPIs. **Each section header must name its source endpoint**, and each
-metric row must show the OS / channel it concerns.
+passing or non-escalated KPIs. **Each section header must name its source
+endpoint**, and each metric row must show the OS / channel it concerns.
 
-Each triggered KPI section must be followed by its `> 🔍 Possible cause:`
+Each escalated KPI section must be followed by its `> 🔍 Possible cause:`
 line. If multiple alerts share the same root cause, merge them into one
 cause line at the bottom of the message. If no cause was identified, write:
 `> 🔍 Possible cause: No clear cause identified from available data. Recommend checking campaign calendar.`
@@ -1491,7 +1802,8 @@ cause line at the bottom of the message. If no cause was identified, write:
   date, raw counts (`delay` / `delivery`), and source `/api/reports/events`
   (DAILY).
 
-  **When `email_delay_high` is a new alert**, append the Step 3c drill-down
+  **When `email_delay_high` is escalated (or in the canvas Alert analysis)**,
+  append the Step 3c drill-down
   **below** the `possible_cause` line (mandatory). Lead with the **peak confirmed
   day**; if several days are confirmed, list the others compactly (date · delay %)
   under the table rather than repeating a full breakdown per day:
@@ -1522,15 +1834,165 @@ cause line at the bottom of the message. If no cause was identified, write:
 - Web push sends must appear as **"Web push sends"** with source
   `/api/reports/sends field "web"`.
 
-#### Resolution message (when an alert clears)
+#### No resolution posts
 
-Also use `slack_send_message` with the `message` parameter (not `text`).
+Resolutions are **not** posted to Slack any more. A resolved alert is removed from
+the canvas Open Alerts table and logged in the dashboard `resolvedRecently` list
+(Step 13). If a TAM wants a heads-up that things recovered, it shows in the weekly
+recap (Step 10b) and the local dashboard — not as a channel message.
+
+### Step 10b — Weekly recap (light, activity-focused)
+
+Purpose: a single friendly weekly Slack post celebrating **last week's activity** —
+the opposite of an alert. It replaces channel clutter with one useful summary.
+
+**Skipped on `canvas-only` runs** (that scope posts nothing to Slack).
+
+**Cadence & throttle.** Post at most **once per 7 days**. Read the
+`_Recap posted: {date}_` marker from the canvas footer (Step 7); post only if the
+marker is absent or `today − last_recap >= 7 days`. After posting, set the marker
+to `today` (Step 11). This aligns naturally with the weekly-insights cadence but is
+tracked independently so the two can drift without double-posting.
+
+**Scope — one-shot + unicast only.** Highlight deliberate, notable sends:
+**one-shot campaigns (`type=PUSH`) and the unicast/transactional aggregate**.
+**Exclude** recurring/automation (`type=GROUP`) — background journeys don't belong
+in a highlights post.
+
+**Data (reuse what Step 7b already fetched — minimal new calls):**
+- **Top one-shots, grouped by channel:** take the ranked `one_shot` entries from
+  7b.3 and bucket them by their **7b.6-detected channel** (push / email / message
+  center / SMS). Within each channel present, keep the **top ~3 by delivery**.
+  **Skip any channel with no one-shot campaign** in the window — never invent an
+  empty section. Email one-shots that show `delivery.app=0` in the activity log
+  are still included when step **2b** confirms them via
+  `events/summary/perpush`. If a channel truly has no qualifying one-shots after
+  that probe (and pagination was not truncated), say so rather than implying it
+  was idle.
+- **Per-campaign volume + engagement + benchmark:** reuse the **7b.3 step 8**
+  figures already computed for each shortlisted one-shot — `sends`/`delivery`, the
+  channel-appropriate engagement rate (push/in-app direct open %, email open/click
+  %, MC/SMS often none). For engagement context:
+  - **Push / in-app:** the **direct-open benchmark band** vs the vertical (Step
+    7b.2), as before.
+  - **Email:** there is **no Airship email benchmark**, so compare each email to
+    **the client's own emails** instead — the **internal email baseline**
+    (`client_email_open_rate` / `client_email_click_rate`, defined in 7b.3 §8).
+    Show the campaign's open/click **vs that average** as a signed delta in points
+    with an arrow (▲ above / ▼ below the client's own average).
+  - **SMS / message center:** usually volume only → engagement `n/a`.
+  Follow the honesty rules: below-floor delivery → rate `n/s` and no comparison;
+  missing metric → `n/a`. Show at most **one extra data line per campaign**; omit
+  fields that are n/a.
+- **Content preview (text only — no images in Slack):** for each top one-shot, run
+  the **7b.6 extractor** on its cached pushbody → `title` + `snippet` (and, for
+  email, the `subject`). **Do not post image URLs** in the Slack recap — hero-image
+  links clutter the post and hurt readability. Instead show the **message wording**
+  as a Slack **blockquote** (`>`) so it reads like the real message: push quotes the
+  *title + body*, email quotes the *subject*, SMS the message, message center the
+  *title + body*.
+- **Per-channel synthesis (the point of the recap).** After listing a channel's
+  messages, add **one channel-level synthesis** — not per message — with three short
+  labelled lines so the reader goes from *what was sent* to *so what*:
+  - 🎯 **Bench** — where the channel's campaigns sit vs their reference: push = the
+    vertical **direct-open band** (with a small `▰▱▱▱▱` gauge + Low/Med/High);
+    email = the **internal** comparison to the client's own average (7b.3 §8);
+    SMS/MC = "no benchmark". 1–2 sentences explaining the read (e.g. live-alert
+    direct taps low but influenced open strong; big blast dilutes open but keeps the
+    best CTR). Cap at **Medium confidence**.
+  - 💡 **Reco** — **one** concrete, numbers-grounded action (e.g. replicate the
+    winning subject, add an explicit CTA, segment the low-open blast). Never generic
+    filler; omit if nothing honest to say.
+  - 🧭 **Context** — best-effort brand/activity context for these messages (reuse
+    7b.5 names/categories + optional web check), clearly flagged best-effort.
+- **Unicast:** reuse the 7b.4 aggregate estimate — **one line**, never a per-message
+  list (unicast bodies are empty / not retrievable).
+- **In-app activity — aggregated block only.** No Airship API lists scenes by
+  impressions, so do **not** attempt a per-scene breakdown. From the
+  `events_current` / `events_previous` payloads already fetched in Step 2 (which
+  Step 2 *discards* for email/custom purposes but which still contain them), sum
+  the events with `location ∈ {in_app_message, in_app_pager}` for each 7-day
+  window and show the **week-over-week** total. That is the whole in-app section.
+
+**Message format (markdown — no images, no file upload).** Make it **airy and
+visual**: one **`### {emoji} {Channel}`** section per channel, each listing its
+messages, then the **channel-level synthesis** (Bench → Reco → Context). Separate
+sections with `---` dividers. Use the markdown the Slack MCP renders: `##`/`###`
+headers, `>` **blockquotes** for message wording, `` `code` `` for volume + the
+`▰▱▱▱▱` gauge, **bold**, and dividers. Per channel the flow is **messages + wording
+→ performance → benchmark analysis → recommendation → context**.
 
 ```
-✅ KPI Resolved — {Client name} — {today}
-{kpi_label} ({os}) is back within normal range.
-[📊 KPI Canvas]({canvas_url})
+## 📊 Weekly Recap — {Client name}
+🗓️ **{current_window_start} → {current_window_end}** · one-shot campaigns, by channel
+
+---
+
+### 📣 Push — {n} messages · {Σ delivery} delivered
+
+**{emoji} {short title}** · {date}
+> {message wording — title + body, plain text}
+
+`{delivery} delivered` · direct open **{direct_open}%**
+
+_(repeat per message — top ~3 by delivery. Below the volume floor → "direct open n/s".)_
+
+🎯 **Bench** · {vertical} {os} → `▰▱▱▱▱` **{Low/Med/High}** _(p10 {p10}% · p50 {p50}%)_
+{1–2 sentences: where these sit vs the band and why (e.g. live-alert direct taps low,
+ influenced open strong).}
+
+💡 **Reco** · {one concrete, numbers-grounded action.}
+
+🧭 **Context** · {best-effort brand/activity context — Medium confidence.}
+
+---
+
+### ✉️ Email — {n} messages · {Σ sends} sent · client avg {client_avg}% open
+
+**{emoji} {short subject}** · {date}
+> {email subject}
+
+`{sends} sent` · open **{open_rate}%** · click {click_rate}% · vs client `{▲/▼}{Δ} pts` {🟢/🟡/🔴}
+
+_(repeat per message)_
+
+🎯 **Bench** · no Airship email benchmark → **internal** (client avg {client_avg}% open · {client_click_avg}% click)
+{1–2 sentences comparing the emails to the client's own average / to each other.}
+
+💡 **Reco** · {one concrete action.}
+
+🧭 **Context** · {editorial/brand context.}
+
+---
+
+### 📱 In-app — {in_app_total} interactions · {wow_arrow} {wow_delta}% WoW
+_in_app_message + in_app_pager · aggregate, no per-scene detail_
+
+---
+
+📊 **Full analysis** → [KPI Canvas]({canvas_url})
 ```
+
+_(All labels and prose above are written in **English**.)_
+
+- **SMS / message center** follow the **same section shape** (header → per-message
+  wording + volume → synthesis). MC/SMS usually have no engagement, so Bench reads
+  "no benchmark" and the synthesis is lighter (Reco/Context only when there is
+  something honest to say).
+- **Unicast / transactional** stays a **single line** — either under the Push
+  section or its own `### 📨 Unicast` line: `≈ {unicast_estimate} sends ({share}% of
+  push volume)`.
+- **Gauge** `▰▱▱▱▱` = 5 blocks filled to where the rate sits in the band
+  (≈ Low → 1, Med → 3, High → 5); it is a visual aid for the same band, never a new
+  metric.
+
+Skip any section with no data (no one-shots in a channel → omit that channel; no
+in-app → omit that line). **Never post image URLs.** Never fabricate content: if the
+extractor returns no wording, drop the `>` line rather than inventing one; omit a
+Reco/Context you cannot ground. Never fabricate an engagement rate or a band — show
+`n/s` below the volume floor, `n/a` when unmeasured. Push uses the vertical band;
+**email uses the client's own average**; SMS / MC show volume only. All prose
+(headers, wording labels, Bench/Reco/Context) is written in **English**.
 
 ### Step 11 — Update the canvas
 
@@ -1583,7 +2045,7 @@ Instead, follow this section-by-section workflow every run:
    | Section to update | How |
    |---|---|
    | `_Last run:` line | `replace` the paragraph section_id with the new date line |
-   | `## 🚨 Open Alerts` | `replace` with the refreshed **verbose** alerts table **plus** the per-alert "Alert analysis" block (lead with a 🟢/🟡/🔴 **Status** pill column; carry `🔕 Muted` rows over and never drop a muted key just because it's silent) |
+   | `## 🚨 Open Alerts` | `replace` with the refreshed **verbose** alerts table **plus** the per-alert "Alert analysis" block. Lead with a 🟢/🟡/🔴 **Status** pill column. The Step 8a state is carried in the existing `Status` cell (no new columns): `🟠 Candidate {streak}/{N}` for candidates, `Active` for confirmed, `Active · clearing {k}/{M}` while resolving, `🔕 Muted` for mutes, and a `· escalated {date}` suffix when Step 10 escalated the key (the throttle marker). Carry `🔕 Muted` and candidate rows over; never drop a muted key just because it's silent. |
    | `## 🧭 Executive recap` | **weekly insights** — `replace` with the rebuilt narrative callout (project health + activity read + best-effort brand-activity link). Only when `run_weekly_insights` (Step 0); otherwise leave untouched. |
    | `## 🌍 Global snapshot & benchmark` | **weekly insights** — `replace` with the rebuilt global opt-in/devices snapshot + benchmark table. Only when `run_weekly_insights`. |
    | `## 📈 3-month trend` | **weekly insights** — `replace` with the rebuilt sparkline cards + monthly table (app opens, sends per platform, marketing pressure, opt-in rate, time-in-app). Only when `run_weekly_insights`. |
@@ -1593,6 +2055,7 @@ Instead, follow this section-by-section workflow every run:
    | `## 📈 Devices history` | `prepend` a new row at the top of the table — **never replace the full table** |
    | `## 📧 Email deliverability health — last 30 days` | `prepend` new daily row(s) from Step 3b — **never replace the full table** unless trimming to 30 rows |
    | `_Insights refreshed: {date}_` footer marker | when `run_weekly_insights`, `replace` it with today's date (this is the gate marker read in Step 0). Leave it untouched otherwise. |
+   | `_Recap posted: {date}_` footer marker | when a weekly recap was posted this run (Step 10b), `replace` it with today's date (the recap throttle marker). Leave it untouched otherwise. |
 
    **Weekly-insight sections** (`🧭 Executive recap`, `🌍 Global snapshot &
    benchmark`, `📈 3-month trend`, `🏆 Top campaigns`, `📨 Unicast /
@@ -1745,7 +2208,7 @@ _(Sends split per platform; push = iOS+Android. Marketing pressure = push sends 
 opted-in (proxy). Time-in-app is an average (MONTHLY) — never summed. Omit
 Email/SMS/Web columns the project never uses. Weekly section.)_
 
-## 🏆 Top campaigns — last 30 days  _(weekly · source: /api/reports/activity/details, /perpush/detail, /perpush/pushbody)_
+## 🏆 Top campaigns — last 30 days  _(weekly · source: /api/reports/activity/details, /events/summary/perpush, /perpush/detail, /perpush/pushbody)_
 
 ::: {.callout}
 🏆 **Highlights.** {2–3 sentences in **bold**: the single biggest campaign and its
@@ -1755,9 +2218,11 @@ flagged for **volume drift**, and (best-effort) how the top sends map to the
 :::
 
 **One-shot** _(type=PUSH)_
-| Message name | Category | Platform | Date | Sends | Direct open |
-|---|---|---|---|---|---|
-| {name} | {category} | iOS+And | {date} | … | … % |
+| Message name | Category | Platform | Date | Sends | Delivery | Direct open | Bench |
+|---|---|---|---|---|---|---|---|
+| {name} | {category} | iOS+And | {date} | … | … | … % | `███▓░` 🟢 High |
+| {name} | {category} | Email | {date} | … | … | open … % · click … % | ▲ +… pts vs client avg |
+| {name} | {category} | SMS | {date} | … | … | n/a | no benchmark |
 
 **Recurring / automation** _(type=GROUP)_
 | Message name | Category | Platform | Occurrences | Sends (Σ) | Vol. drift |
@@ -1770,9 +2235,19 @@ flagged for **volume drift**, and (best-effort) how the top sends map to the
 | {name} | iOS+And | {date} | … | {variant or n/s} |
 
 _(Names + categories from pushbody metadata only — never the message body/HTML.
-Direct-open below the volume floor shows "n/s". Exclude test sends. Show a
-platform only if active. Empty-body pushes are unicast (see next section). Weekly
-section.)_
+**Delivery** = app alerting (push) / **`delivery` from `/events/summary/perpush`**
+(email); the denominator for rates. **Direct open** = `interaction.app.direct /
+delivery` for push; email shows **open/click from `/events/summary/perpush`**
+(mandatory — activity log and `perpush/detail` do not carry email volume).
+**Bench** for **push** is a `███▓░` gauge filled to where the campaign's direct
+open rate sits in the vertical's `direct_open_rate` `[p10–p90]` band
+(delivery-weighted per-OS blend, Step 7b.3 §8) with a 🔴 Low ≤ p10 · 🟡 Medium ≈
+p50 · 🟢 High ≥ p90 pill. **Email** has no Airship benchmark, so its Bench cell
+shows the **internal comparison** — ▲/▼ open vs the **client's own email average**
+that window (`client_email_open_rate`, 7b.3 §8). Direct-open below the volume floor
+shows "n/s" (no gauge); **SMS / MC** and verticals with no benchmark show "no
+benchmark" — never a borrowed or invented band. Exclude test sends. Show a platform
+only if active. Empty-body pushes are unicast (see next section). Weekly section.)_
 
 ## 📨 Unicast / transactional — last 30 days  _(weekly · source: /api/reports/sends − /activity/details delivery)_
 
@@ -1814,12 +2289,17 @@ _(Keep last 30 rows. Prepend new days from Step 3b; do not duplicate a date alre
 
 ---
 _Insights refreshed: {date of the last weekly-insights rebuild}_
+_Recap posted: {date of the last weekly recap Slack post}_
 ```
 
 The `_Insights refreshed:_` footer is the **weekly-insights gate marker** read in
 Step 0. On first-run creation, set it to `today` only if Step 7b actually ran this
 run (e.g. on a `canvas-only` first build); otherwise omit it so the next run
 treats the insight sections as pending and builds them.
+
+The `_Recap posted:_` footer is the **weekly recap throttle marker** read in
+Step 10b — post the recap only when it is absent or ≥ 7 days old, and update it to
+`today` after posting. Omit it on first-run creation until a recap actually posts.
 
 **Section content rules (apply when replacing each section):**
 1. Open Alerts — replace with the updated table **and** the verbose **Alert
@@ -1901,6 +2381,10 @@ the data is embedded inline and only reflects this run.
 7. If the canvas tooling is unavailable, skip this step and log a warning — it
    never blocks the Slack alerts or per-project canvases.
 
+> **Output language.** All generated reports — the Slack weekly recap (Step 10b),
+> the canvas (Step 11), and the dashboard `trend` strings (Step 13) — are written
+> in **English**. Do not localize into other languages.
+
 ### Step 13 — Update the local HTML dashboard (optional, local-only)
 
 **Skipped on `canvas-only` runs** (unless `+local` was requested), like Step 12.
@@ -1932,9 +2416,12 @@ file:
 
 1. **Read-merge-write history.** Before writing, read the existing
    `dashboard-data.js` if present and reuse its `history` array (and each
-   project's `alertHistory`). Append this run's point, keep the **last ~14**
-   entries, then rewrite the whole file. If the old file is missing or
-   unparseable, start fresh (fail-open).
+   project's `alertHistory`, and **each metric's `series`** — see `metrics`
+   below). Append this run's point to each, keep the **last ~14** `history`
+   entries and the **last ~12** points per metric `series`, then rewrite the
+   whole file. If the old file is missing or unparseable, start fresh
+   (fail-open). On a **weekly run** (Step 7b open), you may seed a longer
+   `series` from the 3-month history already fetched instead of only appending.
 
 2. **File shape** (exact global; values from this run and `clients.yml` —
    **no secrets**):
@@ -1948,17 +2435,47 @@ file:
      priority: "<1–2 sentence priority focus, or omit>",
      stats: { clients, projects, projectsInAlert, openAlerts, resolutions },
      history: [ { ts: "<date>", openAlerts: <n>, projectsInAlert: <n> }, … ], // newest last, ≤14
+     // Alerts that cleared the resolve hysteresis recently (Step 9). No Slack post
+     // fires for these — the dashboard is where recoveries are tracked. Optional.
+     resolvedRecently: [ { key: "<alert_key>", project: "<project>",
+                           resolvedAt: "<YYYY-MM-DD>", cause: "<short note>" }, … ],
      clients: [
        { name: "<client>", projects: [
          { name: "<project>", channel: "<slack_channel>", canvasId: "<slack_canvas_id>",
-           industry: "<benchmark vertical slug from clients.yml, or omit>",
+           industry: "<benchmark vertical slug from clients.yml>",   // REQUIRED — see below
            lastRun: "<run_timestamp>",
            alerts: { count: <active count>, worstSeverity: "danger|warning|info|null", mutedCount: <n> },
            // Optional per-alert detail — enables the dashboard Mute/Unmute buttons
-           // and the per-alert age graph (openedAt).
+           // and the per-alert age graph (openedAt). CONFIRMED alerts only.
            alertsList: [ { key: "<alert_key>", severity: "danger|warning|info",
                           openedAt: "<YYYY-MM-DD first-seen date>",
                           cause: "<short cause>", muted: <true|false>, reason: "<why muted, if muted>" }, … ],
+           // Candidate breaches (Step 8a) — breaching but NOT yet confirmed.
+           // Dashboard-only, never posted to Slack. Shows a streak chip (streak/needed).
+           candidatesList: [ { key: "<alert_key>", severity: "danger|warning|info",
+                          streak: <consecutive breaching runs>, needed: <confirm_runs for this key>,
+                          cause: "<short cause>" }, … ],
+           // Per-KPI depth for the project detail page (Monitor → Open details).
+           // One entry per evaluated metric; powers the KPI cards, headroom gauges
+           // and mini-series. Optional but strongly recommended.
+           metrics: [ { key: "<metric/threshold key>", label: "<human label>",
+                          group: "app|devices|push|acquisition|email|web|sms|custom",
+                          channel: "app|push|email|web|sms|custom|devices",
+                          unit: "%|pts|count|min",
+                          current: <number>, previous: <number>,          // window totals/rates
+                          deltaPct: <n|omit>, deltaPts: <n|omit>,          // WoW change (pick the one that fits the metric)
+                          os: { ios: { deltaPct: <n> }, android: { deltaPct: <n> } } | null,  // omit/null when not per-OS
+                          threshold: { key: "<threshold key>", value: <effective number>,
+                                       kind: "drop|rise|floor|ceiling|gap",
+                                       headroom: <number>,                 // distance to breach (see below)
+                                       breaching: <true|false> },
+                          status: "ok|candidate|confirmed|muted|na",       // na = below min volume
+                          series: [ { t: "<YYYY-MM-DD>", v: <number> }, … ] }, … ],  // newest last, ≤12
+           // Per-project threshold-tuning suggestions (see "Threshold suggestions" below).
+           thresholdSuggestions: [ { key: "<threshold key>", current: <effective value>,
+                          suggested: <number>, direction: "loosen|tighten",
+                          basis: "volatility|false_positives|headroom",
+                          rationale: "<one short sentence>", confidence: "low|med|high" }, … ],
            trend: <"string" | ["bullet", "bullet", …]>, alertHistory: [ <n>, … ] }  // newest last
        ] }
      ],
@@ -1975,10 +2492,43 @@ file:
      `alerts.count` counts **active (non-muted)** alerts; `mutedCount` counts the
      muted ones separately so they stay visible without inflating severity.
    - **`alertsList`** (optional but recommended when there are open alerts): one
-     entry per open alert with its `key`, `severity`, short `cause`, and `muted`
-     flag (+ `reason` when muted). The dashboard renders a per-alert Mute button
-     (or Unmute + a "Muted" pill for already-muted ones). Muted entries are
+     entry per **confirmed** alert with its `key`, `severity`, short `cause`, and
+     `muted` flag (+ `reason` when muted). The dashboard renders a per-alert Mute
+     button (or Unmute + a "Muted" pill for already-muted ones). Muted entries are
      de-emphasised and excluded from `worstSeverity`.
+   - **`candidatesList`** (optional): one entry per **candidate** breach (Step 8a —
+     breaching but not yet confirmed). Include `key`, `severity`, `streak`
+     (consecutive breaching runs), `needed` (`confirm_runs` for that key), and a
+     short `cause`. The dashboard shows these under a "Watching · not yet confirmed"
+     sub-list with a `streak/needed` chip and a `🔎 N watching` badge. Candidates
+     are **never** counted in `alerts.count` and **never** posted to Slack.
+   - **`metrics`** (optional but recommended): the per-KPI depth shown on the
+     **project detail page** (`Monitor → Open details →`). Emit **one entry per
+     metric you evaluated in Steps 1–8** (app opens, time in app, push sends,
+     opt-outs, direct response, opt-in velocity, devices, the email family, web
+     push, SMS, each custom event). For each: a human `label`; a `group`/`channel`
+     so the page can bucket cards by channel (App & engagement, Push,
+     Acquisition, Email, Web, SMS, Custom events, Devices); the `current` and
+     `previous` window values with the WoW change as `deltaPct` **or** `deltaPts`
+     (use points for rate metrics like open/delivery rate, percent for volumes);
+     an `os` split when the metric is per-OS (else `null`); a `threshold` block;
+     the confirmation `status` (`ok` / `candidate` / `confirmed` / `muted`, or
+     `na` when below the min-volume floor); and a bounded `series` (newest last,
+     ≤12 points) reused/extended from the previous `dashboard-data.js`.
+     **`threshold.headroom`** is the signed distance to the breach in the metric's
+     own unit — **positive = safe margin, negative = breaching** (e.g. a drop
+     threshold at −100% with an actual −17.9% has headroom `82.1`; a floor metric
+     3 pts above its floor has headroom `3`). The detail page draws a gauge from
+     it, so keep the sign convention consistent. Omit `metrics` entirely on old
+     snapshots — the page degrades to the summary it already shows.
+   - **`thresholdSuggestions`** (optional): skill-computed tuning hints for the
+     project's thresholds, rendered on the detail page next to each effective
+     value with **Apply / Edit / Reset** (served mode POSTs `/api/thresholds`;
+     `file://` copies a prompt). See **Threshold suggestions** below for how to
+     derive `suggested`, `direction`, `basis`, `rationale`, and `confidence`.
+   - **`resolvedRecently`** (optional, top-level): alerts that cleared the resolve
+     hysteresis recently — `key`, `project`, `resolvedAt`, short `cause`. Rendered
+     as a "✅ Recently resolved" log so recoveries stay visible without a Slack post.
    - **`openedAt`** (recommended): the date the alert **first fired** — read it
      from the `Opened` column of the per-project canvas Open Alerts table
      (Step 11). For an **aggregated** `email_delay_high` / `email_spam_complaint_high`
@@ -1995,19 +2545,55 @@ file:
      expected resolution). The dashboard renders an array as a bullet list. For
      **stable** projects (no open alert) use a single plain **string** (e.g.
      `"Stable — no significant variations"`). Keep each bullet concise.
-   - **`industry`** (optional): the project's benchmark vertical from
-     `clients.yml`. The dashboard shows it as an editable per-project chip (the
-     local server writes changes back to `clients.yml`); omit it if unset.
+   - **`industry`** (**required** — always write it): the project's benchmark
+     vertical read from `clients.yml` (default `all_verticals` when the client has
+     no `industry` set). The dashboard shows it as an editable per-project chip and
+     in the Setup registry; **do not omit it** — omitting makes the Setup tab fall
+     back to displaying `all_verticals` for every project (the reported bug).
    - Do **not** set `isSample`. Omit fields you cannot compute rather than
      inventing values.
 
 3. **No secrets, English only.** Use only names, channels, and canvas IDs from
-   `clients.yml`. Never write app keys, client IDs, or client secrets. All
-   strings (trends, priority) in English.
+   `clients.yml`. Never write app keys, client IDs, or client secrets. All strings
+   (trends, priority) in English.
 
 4. **Fail-open.** If the dashboard folder is missing or the write fails, skip
    this step and log a warning — it never blocks Slack alerts, per-project
    canvases, or Step 12.
+
+#### Threshold suggestions (how to fill `thresholdSuggestions`)
+
+For each project, look at the thresholds you actually evaluated and propose an
+adjustment **only when the data clearly supports it** — an empty array is a valid,
+common result. Never invent numbers; base every suggestion on observed behaviour
+from this run's `metrics.series`, the confirmation gate (Step 8a), and the
+project's mute/resolve history. Emit at most a handful per project (the noisiest
+first). Each suggestion has three possible bases:
+
+- **`volatility`** → *loosen.* When a metric's normal WoW swing (spread of its
+  `series`) regularly approaches or exceeds its threshold **without a real
+  incident** (breaches that stayed candidates and cleared, or resolved cleanly),
+  the threshold is too tight for that project's natural noise. Suggest a looser
+  value roughly at the observed swing plus a margin (e.g. typical ±6 pts → suggest
+  8 pts), or alternatively a higher `alert_confirm_runs`. Confidence `med` with
+  ≥6–8 `series` points, else `low`.
+- **`false_positives`** → *loosen.* When a key has been **muted** as a declared
+  false positive, or has repeatedly gone candidate→cleared / confirmed→resolved
+  in a few runs with no operational impact, suggest loosening it (or raising its
+  confirm-runs). Confidence scales with how many times it recurred.
+- **`headroom`** → *tighten.* When a metric sits **chronically very far** from its
+  threshold across the whole `series` and has never come close to breaching, the
+  threshold may be too loose to ever catch a real regression. Suggest a tighter
+  value closer to the observed range. Always **low** confidence — tightening risks
+  new noise, so it is advisory only.
+
+Output per suggestion: `key`, the `current` effective value (default or the
+project's `custom_thresholds` override), the `suggested` value, `direction`
+(`loosen`/`tighten`), `basis`, a one-sentence `rationale` naming the evidence, and
+`confidence` (`low`/`med`/`high`). Applying a suggestion just writes the project's
+`custom_thresholds[key]` in `clients.yml` — the same field the detail page's
+Apply/Edit and the served `/api/thresholds` endpoint already manage. No new
+config or `serve.py` change is required.
 
 ## Output
 
@@ -2016,9 +2602,9 @@ After each run, print a summary to the agent log:
 ```
 [airship-kpi-monitor] {Client name} — run {run_timestamp}
   Windows: {current_window_start}→{current_window_end} vs {previous_window_start}→{previous_window_end}
-  New alerts: {count} | Resolutions: {count} | Ongoing: {count}
+  Candidates: {count} | Confirmed (new): {count} | Confirmed (ongoing): {count} | Resolved: {count}
+  Escalations posted: {count} | Weekly recap posted: {yes/no}
   Canvas updated: {canvas_id}
-  Slack message posted: {yes/no}
 ```
 
 After a multi-client run, the local monitoring canvas (Step 12) and the local

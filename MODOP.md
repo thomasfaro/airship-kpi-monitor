@@ -346,8 +346,8 @@ from Cursor chat with the relevant MCP servers enabled:
   `Run airship-kpi-monitor canvas for all clients` (aliases: "update canvas
   only", "canvas refresh"). Rebuilds each Slack canvas **including** the weekly
   insight sections (executive recap, global snapshot & benchmark, 3-month trend,
-  top campaigns, unicast) while **skipping** all Slack alert/resolution messages
-  and the local views. Pair it
+  top campaigns, unicast) while **skipping** all Slack posts (critical escalations
+  and the weekly recap) and the local views. Pair it
   with `/loop 7d …` for a dedicated weekly canvas refresh, decoupled from the
   daily alert run. Use **`alerts-only`** for the symmetrical light daily run that
   skips the heavy weekly sections.
@@ -374,12 +374,22 @@ page writes back to `clients.yml` with one click:
 - **Manual**: double-click `.cursor/skills/airship-kpi-monitor/dashboard/serve.command`
   (macOS), or run `uv run --with ruamel.yaml serve.py` in the `dashboard/` folder.
 
+**Two-level Monitor.** The Monitor view is a **fleet list** (`#/`) of compact
+clickable project rows (severity, badges, **worst headroom**, micro-sparkline,
+"Open details →") that opens a **deep project page** (`#/project/<name>`, a
+shareable deep link with browser back). The deep page shows per-channel **KPI
+cards** (current vs previous, WoW delta, iOS/Android split, mini-sparkline, a
+**headroom gauge** to the alert threshold, status chip), an **Alerts & timeline**
+section, and a **Thresholds & suggestions** panel with skill-computed loosen/tighten
+recommendations (basis + rationale + confidence) and **Apply / Edit / Reset**.
+
 In served mode you can: **Mute / Unmute** alerts, edit **per-project thresholds**
-(§4), and manage the **routing registry** in the **Setup** tab (§2.2). The server
-binds `127.0.0.1` only, edits **only** the gitignored `clients.yml`, and
-**rejects any secret-shaped field**. Credentials and smoke-tests stay with the
-agent (the Setup tab provides copy-prompts for those). Disable auto-start by
-removing the `start-dashboard.sh` entry in `.cursor/hooks.json`.
+(§4), **apply threshold suggestions** from a project's deep page, and manage the
+**routing registry** in the **Setup** tab (§2.2). The server binds `127.0.0.1`
+only, edits **only** the gitignored `clients.yml`, and **rejects any secret-shaped
+field**. Credentials and smoke-tests stay with the agent (the Setup tab provides
+copy-prompts for those). Disable auto-start by removing the `start-dashboard.sh`
+entry in `.cursor/hooks.json`.
 
 **Static mode (no server) — read-only.** Open it directly anywhere, even on a
 teammate's machine; actions copy a paste-into-chat prompt instead of writing:
@@ -443,8 +453,10 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
 
 **What to verify:**
 - [ ] Agent completes without errors
-- [ ] A Slack message appears in the client channel (or "no alerts" if
-  everything is within thresholds)
+- [ ] The local dashboard shows the run (confirmed alerts, any candidates, and
+  the recently-resolved log). Note: with the confirmation gate, a single run
+  posts **nothing** to the Slack channel unless a critical alert is already
+  confirmed and sustained, or a weekly recap is due — this is expected.
 - [ ] The canvas is created — the agent prints `Canvas ID: F0XXXXXXXXX`
 - [ ] Copy the canvas ID and paste it into your local `clients.yml` entry
 - [ ] Open the local HTML dashboard and confirm the client appears with real
@@ -488,7 +500,7 @@ mirrored in `dashboard/thresholds-catalog.js`, which powers the editor).
 |---|---|---|
 | `401 / 403` errors on Airship API | Wrong OAuth scopes (need exactly `rpt` + `tpl`) or expired credentials | In Airship **Settings → OAuth**, enable only `rpt` and `tpl`; refresh Client ID/Secret in Cursor MCP settings |
 | MCP server stays red | Wrong `uv` path or `airship-mcp` directory | Check `mcp.json` syntax; confirm `uv` and `airship-mcp` path are correct |
-| No Slack message posted | Volume below minimums, or no anomaly | Check agent log — it prints `New alerts: 0` |
+| No Slack message posted | Expected by design — daily alerts live in the dashboard; Slack only gets a throttled critical escalation or the weekly recap | Check the local dashboard and the agent log (`Candidates: … | Confirmed (new): … | Escalations posted: …`) |
 | Canvas link in alerts is broken | URL missing team ID in path | Build URL as `https://{workspace}.slack.com/docs/{team_id}/{canvas_id}` — see SKILL.md |
 | Canvas not found | Wrong canvas ID in `clients.yml` | Re-run Part 3 to get the correct ID |
 | Device delta shows `n/a` | Less than 7 daily runs completed | Expected — fills automatically after 7 days |

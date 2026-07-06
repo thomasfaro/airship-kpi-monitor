@@ -68,7 +68,20 @@
   }
 
   // Mutable app state shared across renders.
-  var APP = { data: null, serverMode: false, state: null, view: "monitor" };
+  var APP = { data: null, serverMode: false, state: null, route: { name: "list" } };
+
+  // Channel buckets for the deep project page KPI panels (ordered top→bottom).
+  // `group`/`channel` on each metric maps here; keys mirror the thresholds catalog.
+  var CHANNEL_GROUPS = [
+    { id: "app", label: "App & engagement" },
+    { id: "push", label: "Push" },
+    { id: "acquisition", label: "Acquisition & opt-ins" },
+    { id: "email", label: "Email" },
+    { id: "web", label: "Web push" },
+    { id: "sms", label: "SMS" },
+    { id: "custom", label: "Custom events" },
+    { id: "devices", label: "Devices" },
+  ];
 
   // --- helpers ---------------------------------------------------------------
   function esc(s) {
@@ -126,6 +139,133 @@
     return { count: a.count || 0, mutedCount: a.mutedCount || 0, worst: a.worstSeverity || null, list: null };
   }
 
+  // --- hash router -----------------------------------------------------------
+  // #/            → flotte list (Monitor)
+  // #/setup       → routing registry (Setup)
+  // #/project/<name> → deep project page
+  function parseRoute() {
+    var h = String(location.hash || "").replace(/^#\/?/, "");
+    if (!h) return { name: "list" };
+    if (h === "setup") return { name: "setup" };
+    var m = h.match(/^project\/(.+)$/);
+    if (m) { try { return { name: "project", project: decodeURIComponent(m[1]) }; } catch (e) { return { name: "project", project: m[1] }; } }
+    return { name: "list" };
+  }
+  function routeHash(route) {
+    if (!route || route.name === "list") return "#/";
+    if (route.name === "setup") return "#/setup";
+    if (route.name === "project") return "#/project/" + encodeURIComponent(route.project);
+    return "#/";
+  }
+  function navTo(hash) {
+    if (location.hash === hash) rerender(); else location.hash = hash; // hashchange → rerender
+  }
+  function findProject(data, name) {
+    var t = String(name || "").trim().toLowerCase();
+    var clients = data.clients || [];
+    for (var i = 0; i < clients.length; i++) {
+      var ps = clients[i].projects || [];
+      for (var j = 0; j < ps.length; j++) {
+        if (String(ps[j].name || "").trim().toLowerCase() === t) return { client: clients[i], project: ps[j] };
+      }
+    }
+    return null;
+  }
+
+  // --- number & metric formatting -------------------------------------------
+  function fmt1(n) {
+    var v = Number(n);
+    if (isNaN(v)) return "\u2014";
+    return (Math.round(v * 10) / 10).toString();
+  }
+  function fmtSigned(n) {
+    var v = Number(n);
+    if (isNaN(v)) return "\u2014";
+    return (v > 0 ? "+" : "") + fmt1(v);
+  }
+  // Compact count formatting (1.24M, 12.3K). Used for volume metrics.
+  function fmtCount(n) {
+    if (n == null || isNaN(n)) return "\u2014";
+    var a = Math.abs(n);
+    if (a >= 1e9) return trimZeros((n / 1e9).toFixed(2)) + "B";
+    if (a >= 1e6) return trimZeros((n / 1e6).toFixed(2)) + "M";
+    if (a >= 1e3) return trimZeros((n / 1e3).toFixed(1)) + "K";
+    return String(Math.round(n));
+  }
+  function trimZeros(s) { return String(s).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1"); }
+  // Value formatting driven by the metric's own unit (the unit of current/previous).
+  function fmtVal(v, unit) {
+    if (v == null || isNaN(v)) return "\u2014";
+    if (unit === "%") return fmt1(v) + "%";
+    if (unit === "pts") return fmt1(v) + " pts";
+    if (unit === "min") return fmt1(v) + " min";
+    return fmtCount(v);
+  }
+  // WoW delta chip. Points (deltaPts) for rate metrics, percent (deltaPct) else.
+  function deltaChip(m) {
+    var v, u;
+    if (typeof m.deltaPts === "number") { v = m.deltaPts; u = " pts"; }
+    else if (typeof m.deltaPct === "number") { v = m.deltaPct; u = "%"; }
+    else return "";
+    var dir = v > 0 ? "up" : v < 0 ? "down" : "flat";
+    var arrow = v > 0 ? "\u25B2" : v < 0 ? "\u25BC" : "\u2013";
+    return '<span class="delta delta--' + dir + '">' + arrow + " " + fmt1(Math.abs(v)) + u + "</span>";
+  }
+  var MSTATUS = {
+    ok: { t: "OK", c: "ok" },
+    candidate: { t: "Watching", c: "cand" },
+    confirmed: { t: "Confirmed", c: "danger" },
+    muted: { t: "Muted", c: "muted" },
+    na: { t: "n/a", c: "na" },
+  };
+  function metricStatus(m) {
+    var s = m.status;
+    if (!s) s = m.threshold && m.threshold.breaching ? "confirmed" : "ok";
+    return MSTATUS[s] || MSTATUS.ok;
+  }
+  function statusChip(m) {
+    var i = metricStatus(m);
+    return '<span class="mstatus mstatus--' + i.c + '">' + esc(i.t) + "</span>";
+  }
+  // Headroom gauge: fill = distance already travelled toward the breach; a marker
+  // sits at the threshold (right edge). headroom is signed (positive = safe margin,
+  // negative = breaching), in the metric's own unit — see SKILL.md Step 13.
+  function headroomGauge(t, unit) {
+    if (!t || typeof t.headroom !== "number") return "";
+    var T = Math.abs(Number(t.value));
+    var H = Number(t.headroom);
+    var frac = T > 0 ? (T - H) / T : (t.breaching ? 1 : 0.5);
+    frac = Math.max(0, Math.min(1.06, frac));
+    var pct = Math.min(100, frac * 100);
+    var cls = t.breaching ? "gauge--danger" : (frac >= 0.75 ? "gauge--warning" : "gauge--ok");
+    var u = unit === "pts" ? " pts" : unit === "%" ? "%" : "";
+    var cap = t.breaching
+      ? "Breaching by " + fmtSigned(-H) + u + " \u00B7 threshold " + fmt1(t.value) + u
+      : "Headroom " + fmt1(H) + u + " \u00B7 threshold " + fmt1(t.value) + u + (t.kind ? " (" + esc(t.kind) + ")" : "");
+    return (
+      '<div class="gauge ' + cls + '">' +
+        '<div class="gauge__track">' +
+          '<div class="gauge__fill" style="width:' + pct.toFixed(0) + '%"></div>' +
+          '<div class="gauge__mark" title="Alert threshold"></div>' +
+        "</div>" +
+        '<div class="gauge__cap">' + cap + "</div>" +
+      "</div>"
+    );
+  }
+  // The metric closest to breaching (smallest headroom) — the project's weakest point.
+  function worstHeadroomMetric(p) {
+    var ms = (p.metrics || []).filter(function (m) { return m && m.threshold && typeof m.threshold.headroom === "number"; });
+    if (!ms.length) return null;
+    ms.sort(function (a, b) { return a.threshold.headroom - b.threshold.headroom; });
+    return ms[0];
+  }
+  function catalogItem(key) {
+    var cat = window.AIRSHIP_KPI_THRESHOLDS || { items: [] };
+    var items = cat.items || [];
+    for (var i = 0; i < items.length; i++) if (items[i].key === key) return items[i];
+    return null;
+  }
+
   // Canonical prompts the agent recognises (see SKILL.md).
   function mutePrompt(project, key, reason) {
     return 'Mute airship-kpi-monitor alert "' + key + '" for project "' + project +
@@ -142,6 +282,9 @@
   }
   function setIndustryPrompt(project, industry) {
     return 'Set airship-kpi-monitor industry to "' + industry + '" for project "' + project + '"';
+  }
+  function runPrompt() {
+    return "Run the airship-kpi-monitor skill for every project in my clients.yml and refresh the local dashboard.";
   }
   function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -572,6 +715,7 @@
   // --- render ----------------------------------------------------------------
   function render(root) {
     var data = APP.data;
+    var route = APP.route = parseRoute();
     root.innerHTML = "";
 
     var headerSpark = "";
@@ -586,11 +730,12 @@
       ? '<span class="srvbadge srvbadge--live" title="Local server running — edits apply directly">\u25CF Live editing</span>'
       : '<span class="srvbadge srvbadge--ro" title="No local server — edits are copied as prompts. Run serve.command to edit directly.">\u25CB Read-only</span>';
 
+    var activeTab = route.name === "setup" ? "setup" : "monitor";
     var header = el(
       '<header class="header">' +
         '<div class="header__top">' +
           "<div>" +
-            '<h1 class="title"><span class="logo">\uD83D\uDEF0\uFE0F</span>Airship KPI Monitor</h1>' +
+            '<h1 class="title"><a class="title__link" href="#/"><span class="logo">\uD83D\uDEF0\uFE0F</span>Airship KPI Monitor</a></h1>' +
             '<p class="subtitle">Last run: <strong>' + esc(data.generatedAt || "n/a") + "</strong>" +
               (data.window ? '<span class="sep">\u2022</span>Window ' + esc(data.window) : "") +
             "</p>" +
@@ -602,42 +747,60 @@
           "</div>" +
         "</div>" +
         '<nav class="nav">' +
-          '<button class="nav__tab" data-view="monitor" type="button">Monitor</button>' +
-          '<button class="nav__tab" data-view="setup" type="button">Setup</button>' +
+          '<a class="nav__tab" href="#/" data-route="monitor" aria-current="' + (activeTab === "monitor" ? "true" : "false") + '">Monitor</a>' +
+          '<a class="nav__tab" href="#/setup" data-route="setup" aria-current="' + (activeTab === "setup" ? "true" : "false") + '">Setup</a>' +
         "</nav>" +
       "</header>"
     );
     root.appendChild(header);
 
-    var monitor = el('<div id="view-monitor" class="view"></div>');
-    var setup = el('<div id="view-setup" class="view"></div>');
-    root.appendChild(monitor);
-    root.appendChild(setup);
+    var view = el('<div id="view" class="view"></div>');
+    root.appendChild(view);
 
-    renderMonitor(monitor, data);
-    renderSetup(setup, data);
+    if (route.name === "setup") {
+      renderSetup(view, data);
+    } else if (route.name === "project") {
+      var found = findProject(data, route.project);
+      if (found) renderProject(view, data, found.client, found.project);
+      else renderMissingProject(view, route.project);
+    } else {
+      renderMonitor(view, data);
+    }
 
     root.appendChild(
       el(
         '<footer class="foot">Local snapshot rewritten on each agent run (this page cannot refresh on its own). ' +
-          "The live, shareable source is each project\u2019s Slack KPI canvas, linked per project above. " +
+          "The live, shareable source is each project\u2019s Slack KPI canvas, linked per project. " +
           "No secrets are stored in this dashboard.</footer>"
       )
     );
 
-    setActiveView(root, APP.view);
     wireUp(root, data);
   }
 
   function rerender() { render(document.getElementById("app")); }
 
-  function setActiveView(root, view) {
-    APP.view = view;
-    root.querySelector("#view-monitor").style.display = view === "monitor" ? "" : "none";
-    root.querySelector("#view-setup").style.display = view === "setup" ? "" : "none";
-    root.querySelectorAll(".nav__tab").forEach(function (t) {
-      t.setAttribute("aria-current", t.getAttribute("data-view") === view ? "true" : "false");
-    });
+  // Programmatic navigation used by the Setup CRUD (keeps the user on Setup after a save).
+  function setActiveView(root, view) { navTo(view === "setup" ? "#/setup" : "#/"); }
+
+  function renderMissingProject(root, name) {
+    root.appendChild(breadcrumb(esc(name || "Unknown project")));
+    root.appendChild(
+      el(
+        '<div class="empty">Project <strong>' + esc(name || "") + "</strong> is not in the current snapshot. " +
+          'It may have been renamed or removed. <a href="#/">Back to Monitor</a>.</div>'
+      )
+    );
+  }
+
+  function breadcrumb(leaf) {
+    return el(
+      '<nav class="crumbs" aria-label="Breadcrumb">' +
+        '<a href="#/">Monitor</a>' +
+        '<span class="crumbs__sep">\u203A</span>' +
+        '<span class="crumbs__leaf">' + leaf + "</span>" +
+      "</nav>"
+    );
   }
 
   function renderMonitor(root, data) {
@@ -645,7 +808,8 @@
       root.appendChild(
         el(
           '<div class="banner">\u26A0\uFE0F <span>Showing <strong>sample data</strong>. Run the skill once to generate the local ' +
-            "<code>dashboard-data.js</code> with your real projects.</span></div>"
+            "<code>dashboard-data.js</code> with your real projects.</span>" +
+            '<button class="btn btn--primary banner__btn" id="runPromptBtn" type="button">Copy run prompt</button></div>'
         )
       );
     }
@@ -691,12 +855,46 @@
     var cardsWrap = el('<div id="cards"></div>');
     root.appendChild(cardsWrap);
 
-    var clients = (data.clients || []).slice().sort(function (a, b) {
-      return clientAlerts(b) - clientAlerts(a) || String(a.name).localeCompare(String(b.name));
+    var groups = buildChannelGroups(data);
+    groups.sort(function (a, b) {
+      var aAlerts = a.items.reduce(function (s, it) { return s + projAlerts(it.project).count; }, 0);
+      var bAlerts = b.items.reduce(function (s, it) { return s + projAlerts(it.project).count; }, 0);
+      return bAlerts - aAlerts || String(a.clients[0] && a.clients[0].name || a.channel).localeCompare(String(b.clients[0] && b.clients[0].name || b.channel));
     });
-    clients.forEach(function (c) {
-      cardsWrap.appendChild(clientCard(data, c));
+    groups.forEach(function (g) {
+      cardsWrap.appendChild(channelGroupCard(data, g));
     });
+
+    if (data.resolvedRecently && data.resolvedRecently.length) {
+      root.appendChild(resolvedSection(data.resolvedRecently));
+    }
+  }
+
+  // Log of alerts that cleared the resolve hysteresis recently (Step 9). No Slack
+  // post fires for these any more — the dashboard is where recoveries are tracked.
+  function resolvedSection(list) {
+    var rows = list
+      .map(function (r) {
+        return (
+          '<li class="resolved">' +
+            '<span class="resolved__mark">\u2713</span>' +
+            '<code class="alert__key">' + esc(r.key) + "</code>" +
+            (r.project ? '<span class="resolved__proj">' + esc(r.project) + "</span>" : "") +
+            (r.resolvedAt ? '<span class="resolved__when">' + esc(r.resolvedAt) + "</span>" : "") +
+            (r.cause ? '<span class="alert__cause">' + esc(r.cause) + "</span>" : "") +
+          "</li>"
+        );
+      })
+      .join("");
+    return el(
+      '<section class="card resolvedcard">' +
+        '<div class="card__head" style="cursor:default">' +
+          '<span class="card__name">\u2705 Recently resolved</span>' +
+          '<span class="card__meta">' + list.length + " cleared</span>" +
+        "</div>" +
+        '<div class="card__body"><ul class="resolvedlist">' + rows + "</ul></div>" +
+      "</section>"
+    );
   }
 
   function stat(value, label, tone) {
@@ -748,63 +946,100 @@
     return '<ul class="alerts">' + items + "</ul>";
   }
 
-  // A single project rendered as a self-contained block.
+  // Candidate breaches: breaching but not yet confirmed (Step 8a). They live only
+  // in the dashboard — never posted to Slack — with a streak chip (x/N runs).
+  function candidatesDetail(list) {
+    if (!list || !list.length) return "";
+    var items = list
+      .map(function (a) {
+        var sev = a.severity && SEV[a.severity] ? a.severity : "info";
+        var streak = a.streak != null && a.needed != null ? a.streak + "/" + a.needed : a.streak != null ? String(a.streak) : "\u2022";
+        return (
+          '<li class="cand cand--' + sev + '">' +
+            '<span class="cand__streak" title="Consecutive breaching runs / runs needed to confirm">' + esc(streak) + "</span>" +
+            '<code class="alert__key">' + esc(a.key) + "</code>" +
+            (a.cause ? '<span class="alert__cause">' + esc(a.cause) + "</span>" : "") +
+          "</li>"
+        );
+      })
+      .join("");
+    return '<ul class="cands">' + items + "</ul>";
+  }
+
+  function thresholdUnit(t) {
+    var it = t && t.key ? catalogItem(t.key) : null;
+    if (it && it.unit) return it.unit;
+    return "";
+  }
+  // Short "worst headroom" chip for the fleet list — the KPI closest to breaching.
+  function headroomChip(p) {
+    var wh = worstHeadroomMetric(p);
+    if (!wh) return "";
+    var t = wh.threshold;
+    var u = thresholdUnit(t);
+    var us = u === "pts" ? " pts" : u === "%" ? "%" : "";
+    if (t.breaching) {
+      return '<span class="hchip hchip--danger" title="' + esc(wh.label) + ' is breaching its threshold">breaching: ' + esc(wh.label) + "</span>";
+    }
+    var tone = t.headroom <= Math.abs(Number(t.value)) * 0.25 ? "warn" : "ok";
+    return '<span class="hchip hchip--' + tone + '" title="Closest KPI to its alert threshold">worst headroom: ' +
+      fmt1(t.headroom) + us + " \u00B7 " + esc(wh.label) + "</span>";
+  }
+
+  // A project rendered as a compact, clickable fleet-list row (recap). Full depth
+  // lives on the deep project page (#/project/<name>), opened by clicking the row.
   function projectBlock(data, c, p) {
     var pa = projAlerts(p);
     var sev = pa.worst;
+    var cands = (p.candidatesList || []).filter(function (a) { return a && a.key; });
 
     var badges = "";
     if (pa.count > 0 && sev) {
       badges += '<span class="pill ' + SEV[sev].pill + '">' + pa.count + " " + SEV[sev].label + "</span>";
-    } else if (pa.mutedCount === 0) {
+    } else if (pa.mutedCount === 0 && !cands.length) {
       badges += '<span class="pill pill--ok">\u2713 OK</span>';
+    }
+    if (cands.length > 0) {
+      badges += '<span class="pill pill--cand">\uD83D\uDD0E ' + cands.length + " watching</span>";
     }
     if (pa.mutedCount > 0) {
       badges += '<span class="pill pill--muted">\uD83D\uDD15 ' + pa.mutedCount + " muted</span>";
     }
 
-    var alertsHtml = pa.list && pa.list.length
-      ? alertsDetail(p.name, pa.list, data.generatedAt)
-      : '<div class="proj__empty">\u2713 No open alerts</div>';
-    var spark = barSparkline(p.alertHistory, sev);
+    // Representative micro-trend: worst-headroom metric series, else alert-count bars.
+    var wh = worstHeadroomMetric(p);
+    var spark = "";
+    if (wh && wh.series && wh.series.length >= 2) {
+      spark = '<span class="proj__sparklbl">' + esc(wh.label) + "</span>" + lineSparkline(wh.series.map(function (s) { return s.v; }), 96, 22);
+    } else {
+      var bs = barSparkline(p.alertHistory, sev, 84, 20);
+      if (bs) spark = '<span class="proj__sparklbl">Alerts</span>' + bs;
+    }
+
     var canvas = p.canvasId
-      ? '<a class="linkbtn" href="' + esc(canvasLink(data, p.canvasId)) + '">\uD83D\uDCCA Canvas</a>'
+      ? '<a class="linkbtn" data-nonav href="' + esc(canvasLink(data, p.canvasId)) + '">\uD83D\uDCCA Canvas</a>'
       : "";
-    var thr = '<button class="linkbtn thbtn" type="button" data-project="' + esc(p.name) + '">\u2699 Thresholds</button>';
-    var ind = projIndustry(p);
-    var indBtn = '<button class="linkbtn indbtn" type="button" data-project="' + esc(p.name) + '" data-industry="' + esc(ind) + '" title="Industry vertical for benchmark comparison">\uD83C\uDFF7\uFE0F ' +
-      (ind ? esc(verticalLabel(ind)) : "Set industry") + "</button>";
 
     var mutedKeys = (pa.list || []).filter(function (a) { return a.muted; }).map(function (a) { return a.key; }).join(" ");
+    var candKeys = cands.map(function (a) { return a.key; }).join(" ");
     var hay = (p.name + " " + (c.name || "") + " " + (p.channel || "") + " " +
-      (Array.isArray(p.trend) ? p.trend.join(" ") : p.trend || "") + " " + mutedKeys).toLowerCase();
+      (Array.isArray(p.trend) ? p.trend.join(" ") : p.trend || "") + " " + mutedKeys + " " + candKeys).toLowerCase();
 
     return (
-      '<article class="proj' + (sev ? " proj--" + sev : "") + '" data-hay="' + esc(hay) + '" data-sev="' + esc(sev || "") + '">' +
-        '<div class="proj__head">' +
+      '<article class="proj proj--link' + (sev ? " proj--" + sev : "") + '" data-hay="' + esc(hay) + '" data-sev="' + esc(sev || "") +
+        '" data-project="' + esc(p.name) + '" role="link" tabindex="0" aria-label="Open details for ' + esc(p.name) + '">' +
+        '<div class="proj__row">' +
           '<div class="proj__id">' +
             '<span class="proj__name">' + esc(p.name) + "</span>" +
-            '<a class="chan" href="' + esc(channelLink(data, p.channel)) + '">#' + esc(p.channel) + "</a>" +
+            '<a class="chan" data-nonav href="' + esc(channelLink(data, p.channel)) + '">#' + esc(p.channel) + "</a>" +
           "</div>" +
-          '<div class="proj__head-right">' +
-            '<span class="proj__badges">' + badges + "</span>" +
-            '<span class="proj__when">\uD83D\uDD52 ' + esc(p.lastRun || "\u2014") + "</span>" +
-            indBtn +
-            thr +
-            canvas +
-          "</div>" +
-        "</div>" +
-        '<div class="proj__body">' +
-          '<div class="proj__col proj__col--alerts">' +
-            '<div class="proj__label">Open alerts</div>' +
-            alertsHtml +
-          "</div>" +
-          '<div class="proj__col proj__col--trend">' +
-            '<div class="proj__label">Trend \u00B7 recent runs</div>' +
-            '<div class="proj__trend">' + trendCell(p.trend) +
-              (spark ? '<div class="trend-spark">' + spark + "</div>" : "") +
-            "</div>" +
-          "</div>" +
+          '<span class="proj__badges">' + badges + "</span>" +
+          headroomChip(p) +
+          '<span class="proj__spacer"></span>' +
+          (spark ? '<span class="proj__spark">' + spark + "</span>" : "") +
+          '<span class="proj__when" title="Last run">\uD83D\uDD52 ' + esc(p.lastRun || "\u2014") + "</span>" +
+          canvas +
+          '<span class="proj__open">Open details \u2192</span>' +
         "</div>" +
       "</article>"
     );
@@ -832,6 +1067,283 @@
         '<div class="card__body">' + blocks + "</div>" +
       "</section>"
     );
+  }
+
+  // Group all projects by their Slack channel, merging clients that share a channel
+  // into a single fleet-list card (e.g. GMF + MAAF + MMA → cs_fr_covea).
+  function buildChannelGroups(data) {
+    var map = {}, order = [];
+    (data.clients || []).forEach(function (c) {
+      (c.projects || []).forEach(function (p) {
+        var ch = p.channel || "_no_channel_";
+        if (!map[ch]) { map[ch] = { channel: ch, clients: [], items: [] }; order.push(ch); }
+        var g = map[ch];
+        if (!g.clients.some(function (cc) { return cc.name === c.name; })) g.clients.push(c);
+        g.items.push({ client: c, project: p });
+      });
+    });
+    return order.map(function (ch) { return map[ch]; });
+  }
+
+  // Fleet-list card for a channel group (1-N clients, 1-N projects sharing a Slack channel).
+  function channelGroupCard(data, g) {
+    var items = g.items.slice().sort(function (a, b) {
+      return projAlerts(b.project).count - projAlerts(a.project).count ||
+        String(a.project.name).localeCompare(String(b.project.name));
+    });
+    var nAlerts = items.reduce(function (s, it) { return s + projAlerts(it.project).count; }, 0);
+    var nCands  = items.reduce(function (s, it) { return s + (it.project.candidatesList || []).length; }, 0);
+    var nP = items.length;
+
+    var metaParts = [nP + " project" + (nP > 1 ? "s" : "")];
+    if (nAlerts > 0) metaParts.unshift(nAlerts + " open alert" + (nAlerts > 1 ? "s" : ""));
+    else if (nCands > 0) metaParts.unshift(nCands + " watching");
+    else metaParts.push("stable");
+
+    var clientNames = g.clients.map(function (c) { return c.name; }).join(" \u00B7 ");
+    var channelTag = g.channel && g.channel !== "_no_channel_"
+      ? '<a class="chan card__chan" data-nonav href="' + esc(channelLink(data, g.channel)) + '">#' + esc(g.channel) + "</a>"
+      : "";
+    var haystack = (clientNames + " " + g.channel + " " +
+      items.map(function (it) { return it.project.name; }).join(" ")).toLowerCase();
+
+    var blocks = items.map(function (it) { return projectBlock(data, it.client, it.project); }).join("");
+
+    return el(
+      '<section class="card" data-client="' + esc(haystack) + '">' +
+        '<button class="card__head" type="button">' +
+          '<span class="card__caret">\u25BC</span>' +
+          '<span class="card__name">' + esc(clientNames) + "</span>" +
+          channelTag +
+          '<span class="card__meta">' + esc(metaParts.join(" \u00B7 ")) + "</span>" +
+        "</button>" +
+        '<div class="card__body">' + blocks + "</div>" +
+      "</section>"
+    );
+  }
+
+  // --- deep project page (#/project/<name>) ----------------------------------
+  function renderProject(root, data, c, p) {
+    var pa = projAlerts(p);
+    var sev = pa.worst;
+    var cands = (p.candidatesList || []).filter(function (a) { return a && a.key; });
+    var resolved = (data.resolvedRecently || []).filter(function (r) {
+      return String(r.project || "").trim().toLowerCase() === String(p.name).trim().toLowerCase();
+    });
+
+    root.appendChild(breadcrumb(esc(p.name)));
+
+    // Header
+    var sevPill = pa.count > 0 && sev
+      ? '<span class="pill ' + SEV[sev].pill + '">' + pa.count + " " + SEV[sev].label + "</span>"
+      : (cands.length ? '<span class="pill pill--cand">\uD83D\uDD0E ' + cands.length + " watching</span>" : '<span class="pill pill--ok">\u2713 Stable</span>');
+    var ind = projIndustry(p);
+    var indBtn = '<button class="linkbtn indbtn" type="button" data-project="' + esc(p.name) + '" data-industry="' + esc(ind) +
+      '" title="Industry vertical for benchmark comparison">\uD83C\uDFF7\uFE0F ' + (ind ? esc(verticalLabel(ind)) : "Set industry") + "</button>";
+    var canvas = p.canvasId ? '<a class="linkbtn" href="' + esc(canvasLink(data, p.canvasId)) + '">\uD83D\uDCCA Canvas</a>' : "";
+    var thr = '<button class="linkbtn thbtn" type="button" data-project="' + esc(p.name) + '">\u2699 Edit thresholds</button>';
+    root.appendChild(
+      el(
+        '<section class="phead' + (sev ? " phead--" + sev : "") + '">' +
+          '<div class="phead__main">' +
+            '<h2 class="phead__name">' + esc(p.name) + " " + sevPill + "</h2>" +
+            '<div class="phead__sub">' +
+              '<a class="chan" href="' + esc(channelLink(data, p.channel)) + '">#' + esc(p.channel) + "</a>" +
+              '<span class="phead__client">' + esc(c.name || "") + "</span>" +
+              '<span class="phead__when">\uD83D\uDD52 ' + esc(p.lastRun || "\u2014") + "</span>" +
+            "</div>" +
+          "</div>" +
+          '<div class="phead__actions">' + indBtn + thr + canvas + "</div>" +
+        "</section>"
+      )
+    );
+
+    // file:// onboarding banner — editing needs the local server.
+    if (!APP.serverMode) {
+      root.appendChild(
+        el(
+          '<div class="banner banner--info">\u2139\uFE0F <span>Read-only view. To edit thresholds, apply suggestions and mute alerts here, ' +
+            "start the local server: <code>uv run --with ruamel.yaml serve.py</code> (or double-click <code>serve.command</code>) and open " +
+            "<code>http://127.0.0.1:8787</code>. Without it, actions become prompts you paste into Cursor chat.</span></div>"
+        )
+      );
+    }
+
+    // At-a-glance tiles
+    var wh = worstHeadroomMetric(p);
+    var whTxt = wh ? (wh.threshold.breaching ? "breaching" : fmt1(wh.threshold.headroom) + (thresholdUnit(wh.threshold) === "pts" ? " pts" : thresholdUnit(wh.threshold) === "%" ? "%" : "")) : "\u2014";
+    root.appendChild(
+      el(
+        '<section class="glance">' +
+          stat(pa.count, "Open alerts", pa.count > 0 ? "danger" : "") +
+          stat(cands.length, "Watching", cands.length > 0 ? "warning" : "") +
+          stat(pa.mutedCount, "Muted", pa.mutedCount > 0 ? "muted" : "") +
+          stat(resolved.length, "Resolved recently", resolved.length > 0 ? "success" : "") +
+          '<div class="stat stat--wide' + (wh && wh.threshold.breaching ? " stat--danger" : "") + '">' +
+            '<div class="stat__value">' + esc(whTxt) + "</div>" +
+            '<div class="stat__label">Worst headroom' + (wh ? " \u00B7 " + esc(wh.label) : "") + "</div>" +
+          "</div>" +
+        "</section>"
+      )
+    );
+
+    // KPI panels by channel
+    root.appendChild(kpiPanels(p));
+
+    // Alerts & timeline
+    root.appendChild(alertsTimeline(data, p, pa, cands, resolved));
+
+    // Thresholds & suggestions
+    root.appendChild(thresholdsPanel(p));
+  }
+
+  function kpiPanels(p) {
+    var wrap = el('<div class="psection"><h3 class="psection__title">KPI depth</h3><div class="kpanels"></div></div>');
+    var host = wrap.querySelector(".kpanels");
+    var metrics = (p.metrics || []).filter(function (m) { return m && m.key; });
+    if (!metrics.length) {
+      host.appendChild(el('<div class="panel"><div class="note">No per-KPI depth in this snapshot yet. Run the skill (a recent version) to populate detailed metrics.</div></div>'));
+      return wrap;
+    }
+    var byGroup = {};
+    metrics.forEach(function (m) {
+      var g = m.group || m.channel || "app";
+      (byGroup[g] = byGroup[g] || []).push(m);
+    });
+    var order = CHANNEL_GROUPS.slice();
+    // Append any groups not in the canonical order.
+    Object.keys(byGroup).forEach(function (g) {
+      if (!order.some(function (o) { return o.id === g; })) order.push({ id: g, label: g });
+    });
+    order.forEach(function (grp) {
+      var list = byGroup[grp.id];
+      if (!list || !list.length) return;
+      var cards = list.map(kpiCard).join("");
+      host.appendChild(
+        el('<section class="kpanel"><header class="kpanel__head">' + esc(grp.label) + "</header>" +
+          '<div class="kpanel__cards">' + cards + "</div></section>")
+      );
+    });
+    return wrap;
+  }
+
+  function kpiCard(m) {
+    var t = m.threshold || {};
+    var osHtml = "";
+    if (m.os && (m.os.ios || m.os.android)) {
+      var parts = [];
+      if (m.os.ios && typeof m.os.ios.deltaPct === "number") parts.push('<span class="os">iOS ' + deltaChip({ deltaPct: m.os.ios.deltaPct }) + "</span>");
+      if (m.os.android && typeof m.os.android.deltaPct === "number") parts.push('<span class="os">Android ' + deltaChip({ deltaPct: m.os.android.deltaPct }) + "</span>");
+      if (parts.length) osHtml = '<div class="kcard__os">' + parts.join("") + "</div>";
+    }
+    var series = (m.series || []).map(function (s) { return typeof s === "object" ? s.v : s; });
+    var sparkHtml = series.length >= 2 ? '<div class="kcard__spark">' + lineSparkline(series, 150, 30) + "</div>" : "";
+    return (
+      '<article class="kcard kcard--' + metricStatus(m).c + '">' +
+        '<div class="kcard__top">' +
+          '<div class="kcard__ident"><span class="kcard__label">' + esc(m.label || m.key) + "</span>" +
+            '<code class="kcard__key">' + esc(m.key) + "</code></div>" +
+          statusChip(m) +
+        "</div>" +
+        '<div class="kcard__vals">' +
+          '<span class="kcard__cur">' + fmtVal(m.current, m.unit) + "</span>" +
+          '<span class="kcard__prev">prev ' + fmtVal(m.previous, m.unit) + "</span>" +
+          '<span class="kcard__wow">WoW ' + deltaChip(m) + "</span>" +
+        "</div>" +
+        osHtml +
+        sparkHtml +
+        headroomGauge(t, thresholdUnit(t)) +
+      "</article>"
+    );
+  }
+
+  function alertsTimeline(data, p, pa, cands, resolved) {
+    var wrap = el('<div class="psection"><h3 class="psection__title">Alerts &amp; timeline</h3><div class="panel ptimeline"></div></div>');
+    var host = wrap.querySelector(".ptimeline");
+    var alertsHtml = pa.list && pa.list.length
+      ? alertsDetail(p.name, pa.list, data.generatedAt)
+      : '<div class="proj__empty">\u2713 No confirmed alerts</div>';
+    host.appendChild(el('<div class="tblock"><div class="proj__label">Confirmed alerts</div>' + alertsHtml + "</div>"));
+    if (cands.length) {
+      host.appendChild(el('<div class="tblock"><div class="proj__label">\uD83D\uDD0E Watching \u00B7 not yet confirmed</div>' + candidatesDetail(cands) + "</div>"));
+    }
+    if (resolved.length) {
+      var rows = resolved.map(function (r) {
+        return '<li class="resolved"><span class="resolved__mark">\u2713</span>' +
+          '<code class="alert__key">' + esc(r.key) + "</code>" +
+          (r.resolvedAt ? '<span class="resolved__when">' + esc(r.resolvedAt) + "</span>" : "") +
+          (r.cause ? '<span class="alert__cause">' + esc(r.cause) + "</span>" : "") + "</li>";
+      }).join("");
+      host.appendChild(el('<div class="tblock"><div class="proj__label">\u2705 Recently resolved</div><ul class="resolvedlist">' + rows + "</ul></div>"));
+    }
+    return wrap;
+  }
+
+  // Thresholds & suggestions panel: effective value, skill suggestion + rationale
+  // + confidence, and Apply / Edit / Reset actions.
+  function thresholdsPanel(p) {
+    var suggestions = (p.thresholdSuggestions || []).filter(function (s) { return s && s.key; });
+    var overrides = serverOverrides(p.name);
+    var wrap = el('<div class="psection"><h3 class="psection__title">Thresholds &amp; suggestions</h3><div class="panel thpanel"></div></div>');
+    var host = wrap.querySelector(".thpanel");
+
+    var intro = APP.serverMode
+      ? "Suggestions are computed by the skill from this project\u2019s observed volatility, muted/resolved false positives and chronic headroom. Apply writes your local clients.yml."
+      : "Suggestions are computed by the skill. Start the local server to apply them in one click \u2014 otherwise Apply/Reset copy a prompt for Cursor chat.";
+    host.appendChild(el('<p class="note">' + esc(intro) + '</p>'));
+
+    if (!suggestions.length) {
+      host.appendChild(el('<div class="thempty">\u2713 No threshold adjustments suggested \u2014 current thresholds look well-tuned for this project.</div>'));
+    } else {
+      var rows = suggestions.map(function (s) {
+        var it = catalogItem(s.key);
+        var unit = it && it.unit ? (it.unit === "pts" ? " pts" : it.unit === "%" ? "%" : "") : "";
+        var eff = overrides[s.key];
+        var effVal = eff != null ? eff : (s.current != null ? s.current : (it ? it.default : "\u2014"));
+        var dirArrow = s.direction === "tighten" ? "\u25BC tighten" : "\u25B2 loosen";
+        var conf = s.confidence || "low";
+        var basisLbl = { volatility: "volatility", false_positives: "false positives", headroom: "chronic headroom" }[s.basis] || (s.basis || "");
+        return (
+          "<tr>" +
+            '<td class="th__k"><span class="th__label">' + esc(it ? it.label : s.key) + "</span><code>" + esc(s.key) + "</code></td>" +
+            '<td class="th__eff">' + esc(effVal) + esc(unit) + (eff != null ? ' <span class="th__ov">override</span>' : "") + "</td>" +
+            '<td class="th__sug"><span class="th__dir th__dir--' + esc(s.direction || "") + '">' + dirArrow + "</span> " +
+              '<strong>' + esc(s.suggested) + esc(unit) + "</strong>" +
+              '<span class="th__conf th__conf--' + esc(conf) + '" title="Confidence">' + esc(conf) + "</span>" +
+              '<div class="th__why"><span class="th__basis">' + esc(basisLbl) + "</span> " + esc(s.rationale || "") + "</div></td>" +
+            '<td class="th__act">' +
+              '<button class="btn btn--sm btn--primary th-apply" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '" data-val="' + esc(s.suggested) + '">Apply</button>' +
+              '<button class="btn btn--sm th-edit" data-project="' + esc(p.name) + '">Edit</button>' +
+              '<button class="btn btn--sm th-reset" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '">Reset</button>' +
+            "</td>" +
+          "</tr>"
+        );
+      }).join("");
+      host.appendChild(
+        el(
+          '<table class="thtable"><thead><tr><th>Threshold</th><th>Effective</th><th>Suggested</th><th></th></tr></thead>' +
+            "<tbody>" + rows + "</tbody></table>"
+        )
+      );
+    }
+    host.appendChild(el('<div class="thpanel__foot"><button class="btn thbtn" type="button" data-project="' + esc(p.name) + '">\u2699 Edit all thresholds</button></div>'));
+    return wrap;
+  }
+
+  // Apply a single suggested threshold (served: POST; file://: copy-prompt).
+  function applySuggestion(project, key, val) {
+    if (!APP.serverMode) { copyModal("Apply threshold \u2014 paste into chat", setThresholdPrompt(project, key, val)); return; }
+    var o = {}; o[key] = Number(val);
+    api("/api/thresholds", { project: project, overrides: o })
+      .then(function () { rerender(); toast("Applied " + key + " = " + val); })
+      .catch(function (e) { toast("Error: " + e.message, "danger"); });
+  }
+  function resetThreshold(project, key) {
+    if (!APP.serverMode) { copyModal("Reset threshold \u2014 paste into chat", resetThresholdPrompt(project, key)); return; }
+    var o = {}; o[key] = null;
+    api("/api/thresholds", { project: project, overrides: o })
+      .then(function () { rerender(); toast("Reset " + key + " to default"); })
+      .catch(function (e) { toast("Error: " + e.message, "danger"); });
   }
 
   // --- Setup view ------------------------------------------------------------
@@ -931,8 +1443,32 @@
     root.appendChild(credsPanel());
   }
 
+  function registryRows(data) {
+    var rows = [];
+    (data.clients || []).forEach(function (c) {
+      (c.projects || []).forEach(function (p) {
+        var ind = projIndustry(p);
+        rows.push(
+          "<tr>" +
+            '<td class="reg__name">' + esc(p.name) + "</td>" +
+            "<td>" + (ind ? esc(verticalLabel(ind)) : '<span class="reg__muted">all_verticals</span>') + "</td>" +
+            "<td>" + (p.channel ? "#" + esc(p.channel) : '<span class="reg__muted">\u2014</span>') + "</td>" +
+          "</tr>"
+        );
+      });
+    });
+    return rows.join("");
+  }
   function setupReadOnly(data) {
     var setup = data.setup || {};
+    var rows = registryRows(data);
+    var registry = rows
+      ? '<div class="panel"><h3>Routing registry</h3>' +
+          '<p class="note">Industry per project (from your local <code>clients.yml</code>). ' +
+          "Editing needs the local server \u2014 see the banner above.</p>" +
+          '<table class="regtable"><thead><tr><th>Project</th><th>Industry</th><th>Slack</th></tr></thead>' +
+          "<tbody>" + rows + "</tbody></table></div>"
+      : "";
     var files = (setup.files || [])
       .map(function (f) {
         return (
@@ -953,9 +1489,10 @@
         );
       })
       .join("");
-    var hasContent = files || todos;
+    var hasContent = registry || files || todos;
     return el(
       '<div class="setup__grid">' +
+        registry +
         (files ? '<div class="panel"><h3>Local file locations</h3>' + files + "</div>" : "") +
         (todos ? '<div class="panel"><h3>Install checklist</h3><ul class="todo">' + todos + "</ul></div>" : "") +
         (!hasContent ? '<div class="panel"><div class="note">No setup details available.</div></div>' : "") +
@@ -1065,9 +1602,36 @@
       try { localStorage.setItem("kpi-theme", cur); } catch (e) {}
     });
 
-    // view tabs
-    root.querySelectorAll(".nav__tab").forEach(function (t) {
-      t.addEventListener("click", function () { setActiveView(root, t.getAttribute("data-view")); });
+    // Nav tabs are plain <a href="#/…"> links — the hashchange listener re-renders.
+
+    // Clickable project rows (fleet list → deep project page). Inner links/buttons
+    // marked data-nonav (channel, Canvas) keep their own behaviour.
+    root.querySelectorAll(".proj--link").forEach(function (row) {
+      function go() { navTo("#/project/" + encodeURIComponent(row.getAttribute("data-project"))); }
+      row.addEventListener("click", function (e) {
+        if (e.target.closest("[data-nonav]")) return;
+        go();
+      });
+      row.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+      });
+    });
+
+    // Onboarding: copy the "run the skill" prompt from the sample-data banner.
+    var runBtn = root.querySelector("#runPromptBtn");
+    if (runBtn) runBtn.addEventListener("click", function () {
+      copyModal("Run the skill \u2014 paste into chat", runPrompt());
+    });
+
+    // Deep-page threshold suggestions: Apply / Reset (Edit uses .thbtn below).
+    root.querySelectorAll(".th-apply").forEach(function (b) {
+      b.addEventListener("click", function () { applySuggestion(b.getAttribute("data-project"), b.getAttribute("data-key"), b.getAttribute("data-val")); });
+    });
+    root.querySelectorAll(".th-reset").forEach(function (b) {
+      b.addEventListener("click", function () { resetThreshold(b.getAttribute("data-project"), b.getAttribute("data-key")); });
+    });
+    root.querySelectorAll(".th-edit").forEach(function (b) {
+      b.addEventListener("click", function () { openThresholds(b.getAttribute("data-project")); });
     });
 
     // collapse/expand a card
@@ -1155,6 +1719,7 @@
     data.slackWorkspace = data.slackWorkspace || DEFAULTS.slackWorkspace;
     data.slackTeamId = data.slackTeamId || DEFAULTS.slackTeamId;
     APP.data = data;
+    window.addEventListener("hashchange", function () { render(document.getElementById("app")); });
     probe().then(function () {
       // server state may override workspace/team for deep links
       if (APP.state) {
