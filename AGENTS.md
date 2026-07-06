@@ -28,11 +28,23 @@ set of Markdown files plus a client registry:
 - `MODOP.md` — manual step-by-step setup guide for TAMs (fallback for SETUP.md).
 - `README.md` — product overview.
 - `.cursor/skills/airship-kpi-monitor/dashboard/` — a **local HTML dashboard**
-  openable in any browser with no server (`index.html`). The **app**
-  (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`) is
-  **committed and data-free**; the real data is `dashboard-data.js`, a **local +
-  gitignored** file the skill rewrites each run (SKILL.md Step 13). Browsers can't
-  `fetch()` over `file://`, so data is loaded as a `<script>` that sets
+  openable in any browser with no server (`index.html`). It has two views:
+  **Monitor** and **Setup** (routing registry: per-project industry, editable when
+  the local server runs). Monitor is a **hash-routed two-level** SPA: a **fleet
+  list** (`#/`) where projects are **grouped by Slack channel** (clients sharing a
+  channel appear in one collapsible card; the header shows combined client names +
+  a clickable `#channel` link); each project row shows severity, badges, worst
+  headroom, micro-sparkline, "Open details →"; and a **deep project page**
+  (`#/project/<name>`) with per-channel KPI cards (current/previous, WoW delta,
+  iOS/Android split, mini-sparkline, headroom gauge, status chip), an alerts &
+  timeline section, and a **Thresholds & suggestions** panel (Apply/Edit/Reset).
+  The **app** (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`,
+  `thresholds-catalog.js`) is **committed and data-free**; the real data is
+  `dashboard-data.js` (each run, Step 13), a **local + gitignored** file the skill
+  rewrites. Each project carries `metrics[]` (per-KPI depth incl. `threshold.headroom`
+  and a bounded `series`) and `thresholdSuggestions[]` (skill-computed tuning hints);
+  the deep page degrades gracefully when a snapshot predates these fields. Browsers
+  can't `fetch()` over `file://`, so data is loaded as a `<script>` that sets
   `window.AIRSHIP_KPI_DATA`. No secrets ever live here.
 - `.cursor/skills/airship-kpi-monitor/clients.yml` — **non-secret** client
   registry. It is **local + gitignored**: the repo never ships or commits it. Each
@@ -55,13 +67,21 @@ Each run:
 
 1. Reads `SKILL.md` (and the TAM's local `clients.yml` for multi-client runs).
 2. Calls the **Airship Reports API** via an **Airship MCP server** (`call_airship_api`).
-3. Computes rolling 7-day-window deltas and evaluates thresholds.
-4. Posts Slack alerts via the **Slack MCP** (`slack_send_message`) and maintains
-   a weekly **Slack canvas** (`slack_create_canvas` / `slack_update_canvas`).
+3. Computes rolling 7-day-window deltas and evaluates thresholds, then runs the
+   **confirmation gate** (Step 8a): a breach is a *candidate* until it persists
+   `alert_confirm_runs` runs (hysteresis on resolve; cadence-aware zero-send
+   suppression). This is what removes false positives.
+4. Tracks candidates / confirmed / recently-resolved in the **local dashboard**
+   (Step 13) and maintains the weekly **Slack canvas** (`slack_create_canvas` /
+   `slack_update_canvas`). Slack messages via `slack_send_message` are now **rare**:
+   only a throttled **critical escalation** (Step 10 — confirmed + critical +
+   sustained) and a light **weekly recap** (Step 10b). Daily new-alert/resolution
+   posts are retired.
 
 The Slack canvas doubles as the database — agents have no local storage between
-runs, so each run reads the D-7 device snapshot from the canvas and writes
-today's snapshot back to it.
+runs, so each run reads the D-7 device snapshot **and each alert's confirmation
+streak/state** (from the Open Alerts `Status` column) from the canvas and writes
+today's snapshot + streaks back to it.
 
 To "run in development": follow the manual-test prompt in `MODOP.md` Part 3 (or
 the multi-client / `/loop` modes in `MODOP.md` §2.2), referencing a client's
@@ -72,7 +92,8 @@ Airship MCP server name and a Slack channel name.
 - **Credentials live ONLY in `~/.cursor/mcp.json`** (per-client OAuth, region).
   They are never stored in the repo.
 - **`clients.yml` is routing only** (MCP server name, Slack channel, canvas ID,
-  region, `time_zone`) and is **local + gitignored** — created by each TAM, never
+  region, `time_zone`, `industry`) and is **local + gitignored** — created by each
+  TAM, never
   committed. Several entries may share one Slack channel (multiple projects per
   client), each keeping its own canvas ID. Real client data is never committed;
   the repo ships no client registry.
@@ -118,11 +139,22 @@ Cursor agents — neither can be provisioned from this VM via shell:
   touches the gitignored `clients.yml`.
 - The HTML dashboard app is committed but its data file
   (`dashboard/dashboard-data.js`) is gitignored — a run writes **only** that data
-  file (Step 13), never the committed app. It is fail-open (skips on missing
-  folder / write error) and shares the canvas's Slack **deep links**
-  (`slack://file?team=…&id=…` for canvases, `…/app_redirect?channel=…` for
-  channels) so clicks open the Slack app instead of spawning browser redirect
-  tabs.
+  file (Step 13), never the committed app. It is fail-open (skips on missing folder
+  / write error) and shares
+  the canvas's Slack **deep links** (`slack://file?team=…&id=…` for canvases,
+  `…/app_redirect?channel=…` for channels) so clicks open the Slack app instead of
+  spawning browser redirect tabs.
+- **False-positive gate (Step 8a).** A threshold breach must persist
+  `alert_confirm_runs` consecutive runs to *confirm* (candidates live only in the
+  dashboard); confirmed alerts need `alert_resolve_runs` clean runs to resolve
+  (hysteresis); zero-send windows on non-daily channels are suppressed. Streak
+  state persists in the canvas Open Alerts `Status` column (no new columns).
+- **Slack is quiet by design.** Daily new-alert/resolution posts are retired.
+  Slack only receives a throttled **critical escalation** (Step 10 — confirmed +
+  critical + sustained, ≥7-day throttle stored as a `· escalated {date}` Status
+  suffix) and a light **weekly recap** (Step 10b — top one-shot + unicast campaigns
+  with hosted-image previews + aggregate in-app WoW; throttled via a
+  `_Recap posted:_` canvas footer marker). Everything else is in the dashboard.
 - Changing default thresholds globally = edit
   `.cursor/skills/airship-kpi-monitor/SKILL.md`, commit, push; teammates pick up
   the new version on their next pull (the hook pulls automatically), applied on

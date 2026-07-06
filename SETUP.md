@@ -232,8 +232,11 @@ the next client (if any).
 - Surface the **local dashboard** as the user's main surface:
   - **Served (recommended):** the `.cursor/hooks/start-dashboard.sh` hook
     auto-starts the server; open `http://127.0.0.1:8787` (or double-click
-    `dashboard/serve.command`). There they can manage routing (**Setup** tab),
-    mute alerts, and edit per-project thresholds directly.
+    `dashboard/serve.command`). Monitor is a **fleet list** that opens a **deep
+    project page** per project (per-channel KPI cards, headroom gauges, alerts
+    timeline, and a **Thresholds & suggestions** panel). There they can manage
+    routing (**Setup** tab), mute alerts, edit per-project thresholds, and **apply
+    skill-computed threshold suggestions** directly.
   - **Static:** `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`
     (read-only; actions copy prompts). It shows labelled sample data until a run
     writes the local `dashboard-data.js`.

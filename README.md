@@ -1,7 +1,11 @@
 # airship-kpi-monitor
 
-Daily KPI monitoring for Airship projects — posts Slack alerts when significant
-metric variations are detected, and maintains a strategic weekly Slack canvas.
+Daily KPI monitoring for Airship projects. A **multi-run confirmation gate**
+removes false positives (a breach must persist across runs before it counts), so
+the **daily alert tracking lives in the local dashboard** — Slack stays quiet
+except a rare, throttled **critical escalation** and a light **weekly recap** (top
+one-shot + unicast campaigns with previews, plus an aggregate in-app block). It
+also maintains the unchanged strategic weekly Slack canvas.
 
 Built as a [Cursor Skill](https://cursor.com). All runs are **local**: the
 Airship MCP server runs on your machine via `uv`, so analyses are triggered
@@ -56,8 +60,11 @@ bold-summary callouts — no images, since the Slack MCP can't upload them):
 - **📧 Email deliverability health** — last 30 days, one row per day.
 - **🏆 Top campaigns — last 30 days** — via the **Activity Log**, ranked **by type**
   (one-shot / recurring / experiment) **and platform**, with message **names +
-  categories** and volume drift. Robust against false positives (test sends
-  excluded, volume floors, identity aggregation).
+  categories** and volume drift. The one-shot table also shows each campaign's
+  **delivery, direct open, and a benchmark band** (push, vs the industry
+  `direct_open_rate`; `n/s` below the volume floor, "no benchmark" for
+  email/SMS/MC). Robust against false positives (test sends excluded, volume
+  floors, identity aggregation).
 - **📨 Unicast / transactional** — an aggregate estimate of 1:1 API-triggered
   sends (excluded from the Activity Log; content not retrievable, best-effort).
 
@@ -73,17 +80,60 @@ cadence**; the alert + history sections update on every run.
 Triggered from Cursor chat (manual or /loop)
   → reads clients.yml to select which clients to run
   → calls Airship Reports API via local MCP server (14 days DAILY per endpoint)
-  → reads canvas for D-7 device snapshot + open alert state
+  → reads canvas for D-7 device snapshot + open alert state (incl. confirmation streaks)
   → computes deltas and evaluates thresholds
-  → posts Slack alert only for NEW anomalies (anti-duplication)
+  → confirmation gate (Step 8a): a breach becomes a "candidate" and must persist
+    N runs to be confirmed; hysteresis + cadence-aware zero-send suppression
+  → tracks candidates / confirmed / recently-resolved in the local dashboard
+  → Slack: posts ONLY a throttled critical escalation (confirmed + critical +
+    sustained) + a weekly recap of top campaigns — no daily alert/resolution spam
   → updates canvas: devices history + email health history + open alerts table
 ```
 
-Device WoW comparison uses the **Slack canvas as persistent memory** — there is
-no local storage between runs, so each run writes today's snapshot to the canvas
-and reads the D-7 value from it on the next run.
+Alert state (including per-breach confirmation streaks) uses the **Slack canvas as
+persistent memory** — there is no local storage between runs, so each run writes
+today's snapshot and streak state to the canvas `Status` column and reads them back
+on the next run.
+
+### Fewer false positives, quieter channel
+
+- **Confirmation gate + hysteresis** — a threshold breach is a *candidate* first;
+  it must breach for `alert_confirm_runs` consecutive runs (urgent metrics: 1;
+  noisy metrics: 3) to become a *confirmed* alert, and must clear for
+  `alert_resolve_runs` runs to resolve. Transient one-day blips never surface.
+- **Cadence-aware suppression** — a zero-send window on a channel that only sends
+  a few days a week is expected cadence, not an incident, and is suppressed.
+- **Alerts live in the dashboard** — candidates (with a streak chip), confirmed
+  alerts (with context + age graph), and a recently-resolved log are all in the
+  local HTML dashboard. Slack only gets rare critical escalations + the weekly recap.
+- **Weekly recap** — one friendly Slack post per week: top **one-shot + unicast**
+  campaigns (push / email / message center / SMS) with **text wording previews**
+  (title / subject / short body — no images) and an aggregate in-app activity block
+  (WoW). Each campaign carries its **volume + engagement** (push direct/influenced
+  open, email open/click) and, for push, a **benchmark band** (🔴 Low ≤ p10 · 🟡 Med
+  ≈ p50 · 🟢 High ≥ p90) vs the industry `direct_open_rate`; **email** is compared to
+  the client's own average instead. Below the volume floor the rate reads `n/s`. All
+  reports are written in **English**.
 
 ---
+
+## Install in 3 steps
+
+1. **Clone + open in Cursor.** The skill lives in the repo at
+   `.cursor/skills/airship-kpi-monitor/`, so opening the folder as your workspace
+   auto-discovers it — no `~/.cursor/skills` install.
+2. **Configure the MCP servers** (the only real friction, unchanged): add each
+   project's Airship MCP server to `~/.cursor/mcp.json` and enable the Slack MCP —
+   let the agent do it via [SETUP.md](SETUP.md), or bulk-generate with the optional
+   `scripts/generate_mcp_config.py`.
+3. **Open the dashboard.** The session-start hook auto-starts the local server —
+   just open **`http://127.0.0.1:8787`** (served mode = recommended, edits apply
+   directly). No server? Open `dashboard/index.html` in read-only mode. Then run
+   the skill from chat to populate your real data.
+
+Everything else — projects, channels, thresholds, suggestions, mutes, industry —
+is managed from the dashboard. No secrets ever touch the repo, `clients.yml`, or
+the dashboard.
 
 ## Automated setup (agent-guided) — recommended
 
@@ -185,11 +235,11 @@ Run airship-kpi-monitor alerts-only for all clients.
 
 `canvas` (aliases: "update canvas only", "canvas refresh") rebuilds each Slack
 canvas — **forcing** the executive recap, global snapshot & benchmark, 3-month
-trend, top-campaigns, and unicast sections — while **skipping** all Slack
-alert/resolution messages and the local views. Pair
+trend, top-campaigns, and unicast sections — while **skipping** all Slack posts
+(escalations and the weekly recap) and the local views. Pair
 it with `/loop 7d …` for a weekly canvas refresh decoupled from daily alerts.
 `alerts-only` is the symmetrical light run; the default `full` does everything,
-with the heavy sections naturally rate-limited to weekly.
+with the heavy sections (and the weekly recap) naturally rate-limited to weekly.
 
 ---
 
@@ -210,13 +260,36 @@ Run the bundled local server and the page can **write back** to your local
 - **Manual**: double-click `.cursor/skills/airship-kpi-monitor/dashboard/serve.command`
   (macOS), or run `uv run --with ruamel.yaml serve.py` in the `dashboard/` folder.
 
+The dashboard has two views: **Monitor** and **Setup** (routing registry —
+read-only under `file://`, full CRUD in served mode). Monitor is now a
+**two-level** surface:
+
+- **Fleet list** (`#/`) — projects are **grouped by Slack channel**: clients
+  that share a channel (e.g. GMF · MAAF · MMA → `#cs_fr_covea`) appear under a
+  single collapsible card, with the combined client names and a clickable channel
+  link in the header. Each project inside the card shows severity, open-alert /
+  watching / muted badges, its **worst headroom** (the KPI closest to breaching),
+  a micro-sparkline, and an **Open details →** affordance.
+- **Deep project page** (`#/project/<name>`, shareable deep link with browser
+  back) — the full picture for one project: at-a-glance tiles; **per-channel KPI
+  cards** (current vs previous, WoW delta, iOS/Android split, a mini-sparkline and
+  a **headroom gauge** showing the margin to the alert threshold, plus a status
+  chip: OK / Watching / Confirmed / Muted / n/a); an **Alerts & timeline** section
+  (confirmed alerts with age graph, candidates with streaks, recently resolved);
+  and a **Thresholds & suggestions** panel.
+
 In served mode you can, from the page:
 - **Mute / Unmute** alerts directly,
-- edit **per-project thresholds** (every threshold, prefilled, with reset),
+- edit **per-project thresholds** (every threshold — incl. the confirmation-gate
+  tunables `alert_confirm_runs` / `alert_resolve_runs` — prefilled, with reset),
+- **apply skill-computed threshold suggestions** — on a project's deep page the
+  Thresholds panel proposes loosen/tighten adjustments (from observed volatility,
+  muted/resolved false positives, or chronic headroom) with a rationale and
+  confidence; **Apply / Edit / Reset** in one click,
 - manage the **routing registry** in the **Setup** tab — add / edit / remove
   projects (name, brand, MCP server, Slack channel, canvas ID, region, time zone,
-  industry, enabled), and set each project's **industry** (benchmark vertical)
-  from its per-project chip.
+  industry, enabled), and set each project's **industry** (benchmark vertical) from
+  its per-project chip.
 
 The server is **localhost-only** (binds `127.0.0.1`, same-origin checks), edits
 **only** the gitignored `clients.yml`, and **rejects any secret-shaped field** —
@@ -239,18 +312,20 @@ ready-to-paste prompt** for Cursor chat instead of writing files.
 The dashboard **app** (`index.html`, `styles.css`, `app.js`,
 `dashboard-data.sample.js`, `thresholds-catalog.js`, `serve.py`, `serve.command`)
 is **committed** and contains **no client data** — everyone gets it on clone. The
-real data lives in `dashboard-data.js`, a **local, gitignored** file the skill
-rewrites each run (SKILL.md Step 13). Until the first run writes it, the page
-shows clearly-labelled sample data. A **Cursor canvas** roll-up is also rendered
-beside the chat (`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
+real data lives in `dashboard-data.js` (each run, SKILL.md Step 13) — a **local,
+gitignored** file the skill rewrites. Until the first run writes it, the page shows
+clearly-labelled sample data. A **Cursor canvas** roll-up is
+also rendered beside the chat
+(`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`,
 SKILL.md Step 12).
 
 ## Muting false positives
 
 If an alert is a false positive, mute it so it is **no longer monitored** — never
-posted to Slack (no new-alert or resolution message) — while staying **visible
-and flagged "Muted"** on the Slack canvas, the Cursor canvas, and the HTML
-dashboard. Mutes are **permanent until you unmute**. State lives in the
+escalated to Slack — while staying **visible and flagged "Muted"** on the Slack
+canvas, the Cursor canvas, and the HTML dashboard. (Note: with the confirmation
+gate, most transient false positives never confirm in the first place; muting is
+for persistent breaches you've deliberately judged expected.) Mutes are **permanent until you unmute**. State lives in the
 per-client `muted_alerts` list in your local `clients.yml` (routing-only,
 gitignored — never any secrets).
 
