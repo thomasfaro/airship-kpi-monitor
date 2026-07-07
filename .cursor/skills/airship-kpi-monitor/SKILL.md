@@ -17,6 +17,9 @@ description: >-
   3-month trends (app opens, sends per platform, marketing pressure, opt-in rate,
   time-in-app), 30-day email deliverability health, and top campaigns by type
   (one-shot / recurring / experiment) via the Activity Log plus a unicast estimate.
+  Every analysed campaign is systematically positioned against its market benchmark
+  (push → vertical direct-open band, message center → vertical read-rate band, email
+  → the client's own internal baseline).
   Uses the Airship Reports API via MCP and the Slack MCP plugin. Triggered from
   Cursor chat (one-off or /loop recurring).
 model: claude-sonnet
@@ -991,7 +994,20 @@ pagination tiny (typically a few rows/day) and gives the typology for free.
      flag when it exceeds `recurring_drift_pct`.
 8. **Per-campaign volume, engagement & benchmark band** (computed for the ranked
    **top one-shot** entries only — the shortlist reused by Step 10b / Step 11;
-   never for every row). For each shortlisted campaign, derive:
+   never for every row).
+   **Market-benchmark comparison is mandatory: every analysed campaign must be
+   positioned against its market reference** whenever its engagement is real. The
+   reference depends on the channel — **push/in-app → the vertical `direct_open_rate`
+   band**, **message center → the vertical `message_center_read_rate` band**,
+   **email → the client's own internal baseline** (Airship publishes no email
+   benchmark) — and is resolved from `benchmarks/benchmarks.json` for the project's
+   `industry` (else `all_verticals`). A campaign engagement number is **never shown
+   on its own**: it is always paired with its benchmark band (▰▱▱▱▱ Low/Med/High) or,
+   for email, its ▲/▼ delta vs the client average. The comparison is only omitted
+   when the underlying engagement is genuinely unavailable (delivery `< min_campaign_sends`,
+   metric not measured, or the resolved vertical has no entry for that metric) — in
+   which case say so explicitly (`n/s` / `n/a` / "no benchmark"), never a bare rate.
+   For each shortlisted campaign, derive:
    - **Volume** — `sends` (audience targeted) and `delivery`. For **push/in-app**,
      `delivery = details.delivery.app.alerting` from `/api/reports/activity/details`
      (the denominator for all push rates); per-platform delivery/interaction from
@@ -1010,8 +1026,12 @@ pagination tiny (typically a few rows/day) and gives the typology for free.
        Prefer `open`; if absent use `initial_open` and note "(initial open)".
        If `delivery < min_campaign_sends`, show volume but rate `n/s`. Email is also
        compared to the **internal email baseline** (see the dedicated bullet below).
-     - **Message center / SMS:** whatever is resolvable (often only sends); mark
-       engagement `n/a` when not available.
+     - **Message center:** `read_rate = reads / sends` (or the resolvable read
+       count / delivery) when available — compared to the vertical
+       **`message_center_read_rate`** benchmark (see the band bullet below). Mark
+       engagement `n/a` only when no read data is resolvable.
+     - **SMS:** whatever is resolvable (often only sends); mark engagement `n/a`
+       when not available. SMS has no Airship benchmark.
    - **Internal email baseline (email's "benchmark").** There is **no Airship email
      open/click benchmark**, so email campaigns are judged **against the client's
      own email average** over the same window. Compute once per run from the Step 2
@@ -1029,7 +1049,7 @@ pagination tiny (typically a few rows/day) and gives the typology for free.
    - **Volume-floor honesty (`n/s`):** if `delivery < min_campaign_sends`, keep the
      **volume** but render the rate as **`n/s`** and **do not** compute a benchmark
      band. Never show a rate the volume can't support.
-   - **Benchmark band (push only):** compare the campaign's **direct open rate**
+   - **Benchmark band (push/in-app):** compare the campaign's **direct open rate**
      against the vertical's **`direct_open_rate`** percentiles in
      `benchmarks/benchmarks.json` (the same source the canvas benchmark table cites,
      Step 7b.2). Because a campaign's app delivery blends OSes, use as the reference
@@ -1042,12 +1062,18 @@ pagination tiny (typically a few rows/day) and gives the typology for free.
      `med` (≈ p50) / `high` (≥ p90)** — the same convention used everywhere:
      **🔴 Low ≤ p10 · 🟡 Medium ≈ p50 · 🟢 High ≥ p90**. Benchmark reads are
      **Medium confidence** at most.
-   - **No push benchmark for a channel:** **email** uses the **internal baseline**
-     above (▲/▼ vs the client's own average), not a push band. **SMS / message
-     center** have no benchmark at all — show the engagement value (when real)
-     labelled **"no benchmark"**; never borrow the push band or invent one. If the
-     resolved vertical has no `direct_open_rate` entry at all, treat push the same
-     way (value shown, "no benchmark").
+   - **Benchmark band (message center):** compare the campaign's **read rate**
+     against the vertical's **`message_center_read_rate`** percentiles (this metric
+     is **vertical-only** — no OS split, so no per-OS blend). Same
+     🔴/🟡/🟢 band convention and Medium-confidence cap. Only when a read rate is
+     resolvable; otherwise "no data".
+   - **No market benchmark for a channel:** **email** uses the **internal baseline**
+     above (▲/▼ vs the client's own average), not a push band. **SMS** has no Airship
+     benchmark at all — show the engagement value (when real) labelled
+     **"no benchmark"**; never borrow another channel's band or invent one. If the
+     resolved vertical has no entry for the relevant metric (`direct_open_rate` for
+     push, `message_center_read_rate` for MC), treat that campaign the same way
+     (value shown, "no benchmark").
    - **Be honest / degrade gracefully:** engagement and the band appear **only when
      the underlying numbers are real** (delivery ≥ floor, metric measured, benchmark
      present). Otherwise show the volume and `n/s` / `n/a` / "no benchmark" as
@@ -1896,7 +1922,7 @@ in a highlights post.
 - **Per-campaign volume + engagement + benchmark:** reuse the **7b.3 step 8**
   figures already computed for each shortlisted one-shot — `sends`/`delivery`, the
   channel-appropriate engagement rate (push/in-app direct open %, email open/click
-  %, MC/SMS often none). For engagement context:
+  %, MC read rate when resolvable, SMS often none). For engagement context:
   - **Push / in-app:** the **direct-open benchmark band** vs the vertical (Step
     7b.2), as before.
   - **Email:** there is **no Airship email benchmark**, so compare each email to
@@ -1904,7 +1930,10 @@ in a highlights post.
     (`client_email_open_rate` / `client_email_click_rate`, defined in 7b.3 §8).
     Show the campaign's open/click **vs that average** as a signed delta in points
     with an arrow (▲ above / ▼ below the client's own average).
-  - **SMS / message center:** usually volume only → engagement `n/a`.
+  - **Message center:** when a **read rate** is resolvable, compare it to the
+    vertical **`message_center_read_rate`** band (7b.2); otherwise volume only →
+    engagement `n/a`.
+  - **SMS:** usually volume only → engagement `n/a` (no Airship benchmark).
   Follow the honesty rules: below-floor delivery → rate `n/s` and no comparison;
   missing metric → `n/a`. Show at most **one extra data line per campaign**; omit
   fields that are n/a.
@@ -1918,10 +1947,12 @@ in a highlights post.
 - **Per-channel synthesis (the point of the recap).** After listing a channel's
   messages, add **one channel-level synthesis** — not per message — with three short
   labelled lines so the reader goes from *what was sent* to *so what*:
-  - 🎯 **Bench** — where the channel's campaigns sit vs their reference: push = the
-    vertical **direct-open band** (with a small `▰▱▱▱▱` gauge + Low/Med/High);
-    email = the **internal** comparison to the client's own average (7b.3 §8);
-    SMS/MC = "no benchmark". 1–2 sentences explaining the read (e.g. live-alert
+  - 🎯 **Bench** — **always present** where the channel's campaigns sit vs their
+    reference: push = the vertical **direct-open band** (with a small `▰▱▱▱▱` gauge
+    + Low/Med/High); message center = the vertical **`message_center_read_rate` band**
+    (same gauge) when a read rate is resolvable, else "no data"; email = the
+    **internal** comparison to the client's own average (7b.3 §8); SMS = "no
+    benchmark". 1–2 sentences explaining the read (e.g. live-alert
     direct taps low but influenced open strong; big blast dilutes open but keeps the
     best CTR). Cap at **Medium confidence**.
   - 💡 **Reco** — **one** concrete, numbers-grounded action (e.g. replicate the
@@ -1999,9 +2030,12 @@ _in_app_message + in_app_pager · aggregate, no per-scene detail_
 
 _(All labels and prose above are written in **English**.)_
 
-- **SMS / message center** follow the **same section shape** (header → per-message
-  wording + volume → synthesis). MC/SMS usually have no engagement, so Bench reads
-  "no benchmark" and the synthesis is lighter (Reco/Context only when there is
+- **Message center** follows the **same section shape** (header → per-message
+  wording + volume → synthesis). When a **read rate** is resolvable, its Bench reads
+  the vertical **`message_center_read_rate` band** (`▰▱▱▱▱` gauge + Low/Med/High);
+  otherwise Bench reads "no data".
+- **SMS** follows the same section shape but has no Airship benchmark, so Bench
+  reads "no benchmark" and the synthesis is lighter (Reco/Context only when there is
   something honest to say).
 - **Unicast / transactional** stays a **single line** — either under the Push
   section or its own `### 📨 Unicast` line: `≈ {unicast_estimate} sends ({share}% of
@@ -2014,9 +2048,10 @@ Skip any section with no data (no one-shots in a channel → omit that channel; 
 in-app → omit that line). **Never post image URLs.** Never fabricate content: if the
 extractor returns no wording, drop the `>` line rather than inventing one; omit a
 Reco/Context you cannot ground. Never fabricate an engagement rate or a band — show
-`n/s` below the volume floor, `n/a` when unmeasured. Push uses the vertical band;
-**email uses the client's own average**; SMS / MC show volume only. All prose
-(headers, wording labels, Bench/Reco/Context) is written in **English**.
+`n/s` below the volume floor, `n/a` when unmeasured. Push uses the vertical
+direct-open band; **message center uses the vertical read-rate band** (when a read
+rate is resolvable); **email uses the client's own average**; SMS shows volume only.
+All prose (headers, wording labels, Bench/Reco/Context) is written in **English**.
 
 ### Step 11 — Update the canvas
 
@@ -2246,6 +2281,7 @@ flagged for **volume drift**, and (best-effort) how the top sends map to the
 |---|---|---|---|---|---|---|---|
 | {name} | {category} | iOS+And | {date} | … | … | … % | `███▓░` 🟢 High |
 | {name} | {category} | Email | {date} | … | … | open … % · click … % | ▲ +… pts vs client avg |
+| {name} | {category} | MC | {date} | … | … | read … % | `██▓░░` 🟡 Medium |
 | {name} | {category} | SMS | {date} | … | … | n/a | no benchmark |
 
 **Recurring / automation** _(type=GROUP)_
@@ -2266,12 +2302,15 @@ delivery` for push; email shows **open/click from `/events/summary/perpush`**
 **Bench** for **push** is a `███▓░` gauge filled to where the campaign's direct
 open rate sits in the vertical's `direct_open_rate` `[p10–p90]` band
 (delivery-weighted per-OS blend, Step 7b.3 §8) with a 🔴 Low ≤ p10 · 🟡 Medium ≈
-p50 · 🟢 High ≥ p90 pill. **Email** has no Airship benchmark, so its Bench cell
-shows the **internal comparison** — ▲/▼ open vs the **client's own email average**
-that window (`client_email_open_rate`, 7b.3 §8). Direct-open below the volume floor
-shows "n/s" (no gauge); **SMS / MC** and verticals with no benchmark show "no
-benchmark" — never a borrowed or invented band. Exclude test sends. Show a platform
-only if active. Empty-body pushes are unicast (see next section). Weekly section.)_
+p50 · 🟢 High ≥ p90 pill. **Message center** uses the same gauge against the
+vertical **`message_center_read_rate`** band (vertical-only, no OS blend) when a read
+rate is resolvable, else "no data". **Email** has no Airship benchmark, so its Bench
+cell shows the **internal comparison** — ▲/▼ open vs the **client's own email
+average** that window (`client_email_open_rate`, 7b.3 §8). Rates below the volume
+floor show "n/s" (no gauge); **SMS** and verticals with no entry for the relevant
+metric show "no benchmark" — never a borrowed or invented band. Exclude test sends.
+Show a platform only if active. Empty-body pushes are unicast (see next section).
+Weekly section.)_
 
 ## 📨 Unicast / transactional — last 30 days  _(weekly · source: /api/reports/sends − /activity/details delivery)_
 
