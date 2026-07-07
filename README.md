@@ -265,7 +265,7 @@ read-only under `file://`, full CRUD in served mode). Monitor is now a
 **two-level** surface:
 
 - **Fleet list** (`#/`) — projects are **grouped by Slack channel**: clients
-  that share a channel (e.g. GMF · MAAF · MMA → `#cs_fr_covea`) appear under a
+  that share a channel (e.g. Client A · Client B · Client C → `#cs_fr_shared`) appear under a
   single collapsible card, with the combined client names and a clickable channel
   link in the header. Each project inside the card shows severity, open-alert /
   watching / muted badges, its **worst headroom** (the KPI closest to breaching),

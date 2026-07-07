@@ -52,7 +52,7 @@ every run.
 
 | Parameter | Required | Example |
 |---|---|---|
-| `Client name` | yes | `M6` |
+| `Client name` | yes | `Client A` |
 | `Brand name` | no — defaults to Client name | `Client A Brand` |
 | `Airship MCP server` | yes | `user-CLIENT-A PROD` |
 | `Slack channel` | yes | `cs-fr-client` |
@@ -85,7 +85,7 @@ than their Airship project shorthand. If omitted, falls back to `Client name`.
 ### Slack channel (`slack_channel`)
 
 `clients.yml` stores the **Slack channel name** as shown in Slack, **without**
-the leading `#` — e.g. `cs-fr-bpce`, `cs_fr_m6`.
+the leading `#` — e.g. `cs-fr-client-a`, `cs_fr_client_b`.
 
 At the **start of each run** (before Step 0), resolve it to a channel ID for
 `slack_send_message`:
@@ -1114,11 +1114,11 @@ email `subject`, and the `snippet`/`body` text.
   `<script>`, and comments first**, then scan the **cleaned body** for the hero
   image and the text snippet. (Scanning only the raw first ~8 KB fails on real
   emails whose leading `<style>` block pushes the first `<img>` past the window —
-  this was observed live on M6 emails.)
+  this was observed live on a media client's emails.)
 
 **Decode:** `decoded = json.loads(base64decode(push_body))`. Then branch on the
-channel. Field paths below are **validated live** (Carrefour push+MC, Libon SMS +
-in-app scene, M6 email + push + in-app automation):
+channel. Field paths below are **validated live** (a retail client push+MC, a
+telco client SMS + in-app scene, a media client email + push + in-app automation):
 
 | Channel | Hero media | Text snippet |
 |---|---|---|

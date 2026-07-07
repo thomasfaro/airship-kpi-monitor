@@ -10,8 +10,8 @@ those steps call. It is **optional** — agents may inline the same logic — an
 **no** network / MCP: you pass it the already-fetched ``push_body`` (or decoded
 dict).
 
-Validated live against: Carrefour (push + message center), Libon (SMS, in-app
-scene), M6 (email, push, in-app automation).
+Validated live against: a retail client (push + message center), a telco client
+(SMS, in-app scene), a media client (email, push, in-app automation).
 
 Cost controls handled by the caller (see SKILL.md 7b.6): fetch ``pushbody`` only
 for the ranked shortlist, cache decoded JSON per run. This module adds the third:

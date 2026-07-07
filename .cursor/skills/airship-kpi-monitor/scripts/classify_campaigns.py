@@ -305,6 +305,6 @@ if __name__ == "__main__":
             {"push_uuid": "z", "push_time": "2026-06-04 09:00:00", "sends": 900000,
              "direct_responses": 5000},
         ]
-        names = {"a": "M6+_push_series_01062026", "b": "M6+_push_series_02062026",
-                 "c": "M6+_push_series_03062026", "z": "Soldes_ete_lancement"}
+        names = {"a": "brand_push_series_01062026", "b": "brand_push_series_02062026",
+                 "c": "brand_push_series_03062026", "z": "Soldes_ete_lancement"}
     print(json.dumps(classify(pushes, names), indent=2, ensure_ascii=False))

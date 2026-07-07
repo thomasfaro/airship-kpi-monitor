@@ -1070,7 +1070,7 @@
   }
 
   // Group all projects by their Slack channel, merging clients that share a channel
-  // into a single fleet-list card (e.g. GMF + MAAF + MMA → cs_fr_covea).
+  // into a single fleet-list card (e.g. Client A + Client B + Client C → cs_fr_shared).
   function buildChannelGroups(data) {
     var map = {}, order = [];
     (data.clients || []).forEach(function (c) {
