@@ -17,11 +17,10 @@ directly from Cursor chat using your local MCP servers.
 
 | Category | KPIs |
 |---|---|
-| **App** | Mobile app opens (per OS) |
+| **App** | Mobile app opens (per OS), unique devices as a within-window start→end **period trend** (per OS, from accumulated daily canvas snapshots — `/api/reports/devices` has no date-range support), opt-in / opt-out ratio (per OS) |
 | **Engagement** | Avg time in app /day (per OS) |
-| **Devices** | Installed base, opted-in, uninstalls (iOS, Android, Web) |
 | **Mobile push** | Sends, opt-outs, direct response rate (per OS — direct rate collapse flags a tracking/SDK issue) |
-| **Acquisition** | New opt-ins + net opt-in balance (opt-ins − opt-outs), per OS |
+| **Acquisition** | Opted-in / uninstalled device base (iOS, Android, Web) — current snapshot always shown; WoW Δ vs the canvas D-7 snapshot (else "Δ n/a, history pending") + net opt-in balance (opt-ins − opt-outs), per OS; plus a net-new-devices **installs proxy** per OS (Δ unique devices — the Reports API has no installs endpoint) |
 | **Email** | Sends, deliverability, open rate, bounce rate, unsubscribes, daily spam complaint rate, daily delay rate |
 | **Web push** | Sends (if channel active) |
 | **SMS** | Sends, delivery rate (delivered/dispatched), device base (if channel active) |
@@ -271,21 +270,33 @@ read-only under `file://`, full CRUD in served mode). Monitor is now a
   watching / muted badges, its **worst headroom** (the KPI closest to breaching),
   a micro-sparkline, and an **Open details →** affordance.
 - **Deep project page** (`#/project/<name>`, shareable deep link with browser
-  back) — the full picture for one project: at-a-glance tiles; **per-channel KPI
-  cards** (current vs previous, WoW delta, iOS/Android split, a mini-sparkline and
-  a **headroom gauge** showing the margin to the alert threshold, plus a status
-  chip: OK / Watching / Confirmed / Muted / n/a); an **Alerts & timeline** section
-  (confirmed alerts with age graph, candidates with streaks, recently resolved);
-  and a **Thresholds & suggestions** panel.
+  back) —   the centralized view of one project: **every monitored KPI on its active
+  channels, healthy ones included** (not just problems) — **one card per KPI
+  family** (app opens, time in app, unique-devices trend, opt-in/opt-out ratio,
+  push sends, opt-outs, click rate, installs, opted-in/uninstalled devices, the
+  full email family, web, SMS, custom events). At-a-glance
+  tiles; **per-channel KPI cards** (current vs previous, WoW delta, iOS/Android split, a
+  mini-sparkline history and a **headroom gauge** showing the margin to the alert
+  threshold, plus a status chip: OK / Watching / Confirmed / Muted / n/a) — each
+  card also carries a **one-line analysis** contextualized to the client (value +
+  evolution, benchmark position, whether it's a concern) and its **alert threshold
+  inline** (an editable value under the gauge, right next to the live result and the
+  trend, with Set / Reset and an inline Apply for any skill suggestion). KPIs under
+  their min-volume floor show as **n/a**; unused channels are hidden. Plus an
+  **Alerts & timeline** section (confirmed alerts with age graph, candidates with
+  streaks, recently resolved).
 
 In served mode you can, from the page:
 - **Mute / Unmute** alerts directly,
-- edit **per-project thresholds** (every threshold — incl. the confirmation-gate
-  tunables `alert_confirm_runs` / `alert_resolve_runs` — prefilled, with reset),
-- **apply skill-computed threshold suggestions** — on a project's deep page the
-  Thresholds panel proposes loosen/tighten adjustments (from observed volatility,
-  muted/resolved false positives, or chronic headroom) with a rationale and
-  confidence; **Apply / Edit / Reset** in one click,
+- edit **per-project thresholds inline** — every KPI card has an editable
+  threshold (Set / Reset) so you tune it right where you read the value; a
+  **⚙ Edit all thresholds** link still opens the bulk editor (every threshold,
+  incl. the confirmation-gate tunables `alert_confirm_runs` / `alert_resolve_runs`),
+- **apply skill-computed threshold suggestions** — each KPI card shows its
+  suggestion (loosen/tighten, from observed volatility, muted/resolved false
+  positives, or chronic headroom) with a rationale and confidence; **Apply** it
+  inline in one click (a suggestion with no card that run falls back to a small
+  "Other threshold suggestions" panel),
 - manage the **routing registry** in the **Setup** tab — add / edit / remove
   projects (name, brand, MCP server, Slack channel, canvas ID, region, time zone,
   industry, enabled), and set each project's **industry** (benchmark vertical) from
@@ -360,9 +371,12 @@ Tune any alert threshold for a single project — no skill edit needed. Override
 live in the per-client `custom_thresholds` map in your local `clients.yml`;
 removing a key resets it to the default.
 
-- **From the dashboard** — the per-project **Thresholds** button opens an editor
-  with every threshold (grouped, prefilled, per-key reset). Served mode **saves
-  directly**; static mode **copies prompts**.
+- **From the dashboard (inline)** — on a project's deep page each KPI card shows
+  its alert threshold under the headroom gauge with **Set / Reset**; edit it right
+  where you read the value (blank or the default value clears the override). A
+  **⚙ Edit all thresholds** link still opens the bulk editor (every threshold,
+  grouped, prefilled, per-key reset). Served mode **saves directly**; static mode
+  **copies prompts**.
 - **By prompt**:
   - `Set airship-kpi-monitor threshold "<key>" to <value> for project "<project>"`
   - `Reset airship-kpi-monitor threshold "<key>" to default for project "<project>"`
@@ -433,14 +447,14 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 | `app_opens_drop_pct` | 40 | App opens WoW drop > 40% on that OS → alert (per OS) |
 | `app_opens_cross_os_gap_pts` | 50 | **Or** \|iOS WoW − Android WoW\| > 50 pts → alert on **both** OS |
 | `timeinapp_drop_pct` | 20 | Avg time in app drop > 20% → alert (per OS) |
-| `devices_unique_drop_pct` | 5 | Installed base drop > 5% → alert (per OS) |
-| `devices_optin_drop_pct` | 5 | Opted-in drop > 5% → alert (per OS) |
-| `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% → alert (per OS) |
+| `devices_unique_trend_drop_pct` | 5 | Unique-devices **period trend** (window start→end, from accumulated daily canvas snapshots) drop > 5% → alert (per OS) |
+| `devices_optin_drop_pct` | 5 | Opted-in drop > 5% vs canvas D-7 snapshot → alert (per OS) |
+| `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% vs canvas D-7 snapshot → alert (per OS) |
 | `push_sends_drop_pct` | 100 | Push sends drop > 100% (zero sends) → alert (per OS) |
 | `optouts_rise_pct` | 20 | Opt-outs rise > 20% → alert (per OS) |
 | `direct_response_rate_min` | 0.5 | Direct response rate < 0.5% → alert (per OS) |
 | `direct_response_collapse_pct` | 60 | Direct response rate WoW drop ≥ 60% on an OS → likely tracking/SDK issue |
-| `optins_drop_pct` | 25 | New opt-ins drop > 25% → alert (per OS) |
+| `optin_optout_ratio_drop_pct` | 30 | Opt-in/opt-out ratio WoW drop > 30% **and** a declining within-window trend → alert (per OS) |
 | `email_sends_drop_pct` | 100 | Email sends drop > 100% (zero sends) → alert |
 | `email_deliverability_min` | 95 | Deliverability < 95% → alert |
 | `email_open_rate_drop_pts` | 5 | Open rate drop > 5 pts → alert |
@@ -470,7 +484,7 @@ Minimum volumes (thresholds skipped if previous window is below these):
 | `min_email_delivery_day` | 100 (per day, for spam/delay alerts) |
 | `min_email_campaign_sends` | 5000 (min blast size for delay campaign correlation) |
 | `min_custom_event_count` | 200 |
-| `min_optins` | 100 (per OS) |
+| `min_optin_optout_volume` | 100 (per OS, opt-in + opt-out volume) |
 | `min_timeinapp` | 1 |
 | `min_sms_sends` | 100 |
 | `min_sms_dispatched` | 50 |

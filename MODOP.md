@@ -377,14 +377,20 @@ page writes back to `clients.yml` with one click:
 **Two-level Monitor.** The Monitor view is a **fleet list** (`#/`) of compact
 clickable project rows (severity, badges, **worst headroom**, micro-sparkline,
 "Open details →") that opens a **deep project page** (`#/project/<name>`, a
-shareable deep link with browser back). The deep page shows per-channel **KPI
-cards** (current vs previous, WoW delta, iOS/Android split, mini-sparkline, a
-**headroom gauge** to the alert threshold, status chip), an **Alerts & timeline**
-section, and a **Thresholds & suggestions** panel with skill-computed loosen/tighten
-recommendations (basis + rationale + confidence) and **Apply / Edit / Reset**.
+shareable deep link with browser back). The deep page is the centralized view of
+**every monitored KPI on the project's active channels (healthy ones included)** —
+**one card per KPI family**, with the per-OS breakdown shown inline on the card:
+per-channel **KPI cards** (current vs previous, WoW delta, iOS/Android split,
+mini-sparkline history, a **headroom gauge** to the alert threshold, status chip) —
+each card also carries a **one-line, client-contextualized analysis** and exposes
+its **alert threshold inline** (an editable value under the gauge, with Set / Reset
+and an **Apply** for any skill suggestion: loosen/tighten with basis + rationale +
+confidence). KPIs under their min-volume floor show as **n/a**; unused channels are
+hidden. Plus an **Alerts & timeline** section. A **⚙ Edit all thresholds** link
+still opens the bulk editor.
 
 In served mode you can: **Mute / Unmute** alerts, edit **per-project thresholds**
-(§4), **apply threshold suggestions** from a project's deep page, and manage the
+inline on each KPI card (§4), **apply threshold suggestions** in place, and manage the
 **routing registry** in the **Setup** tab (§2.2). The server binds `127.0.0.1`
 only, edits **only** the gitignored `clients.yml`, and **rejects any secret-shaped
 field**. Credentials and smoke-tests stay with the agent (the Setup tab provides
@@ -474,9 +480,11 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
 Two ways, both writing the per-client `custom_thresholds` map in your local
 `clients.yml` (removing a key resets it to the default):
 
-1. **Dashboard (recommended)** — click **⚙ Thresholds** on a project. The editor
-   lists every threshold (grouped, prefilled, with per-key **reset**). Served mode
-   **saves directly**; static mode **copies prompts** to paste into chat.
+1. **Dashboard (recommended)** — on a project's deep page, edit the threshold
+   **inline on each KPI card** (**Set / Reset** under the headroom gauge, right next
+   to the live value). A **⚙ Edit all thresholds** link opens the bulk editor
+   (every threshold, grouped, prefilled, per-key **reset**). Served mode **saves
+   directly**; static mode **copies prompts** to paste into chat.
 2. **Prompt** in chat:
    - `Set airship-kpi-monitor threshold "<key>" to <value> for project "<project>"`
    - `Reset airship-kpi-monitor threshold "<key>" to default for project "<project>"`

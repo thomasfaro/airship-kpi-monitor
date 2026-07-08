@@ -80,7 +80,6 @@
     { id: "web", label: "Web push" },
     { id: "sms", label: "SMS" },
     { id: "custom", label: "Custom events" },
-    { id: "devices", label: "Devices" },
   ];
 
   // --- helpers ---------------------------------------------------------------
@@ -199,6 +198,7 @@
     if (unit === "%") return fmt1(v) + "%";
     if (unit === "pts") return fmt1(v) + " pts";
     if (unit === "min") return fmt1(v) + " min";
+    if (unit === "x") return (Math.round(v * 100) / 100).toFixed(2) + "x";
     return fmtCount(v);
   }
   // WoW delta chip. Points (deltaPts) for rate metrics, percent (deltaPct) else.
@@ -283,6 +283,17 @@
   function setIndustryPrompt(project, industry) {
     return 'Set airship-kpi-monitor industry to "' + industry + '" for project "' + project + '"';
   }
+  function dismissSuggestionPrompt(project, key) {
+    return 'Dismiss airship-kpi-monitor threshold suggestion "' + key + '" for project "' + project +
+      '" (do not re-emit it on the next run)';
+  }
+  function watchKpiPrompt(project, key, reason) {
+    return 'Watch airship-kpi-monitor KPI "' + key + '" for project "' + project +
+      '". Reason: ' + (reason && String(reason).trim() ? reason : "<why you want to keep an eye on it>");
+  }
+  function unwatchKpiPrompt(project, key) {
+    return 'Stop watching airship-kpi-monitor KPI "' + key + '" for project "' + project + '"';
+  }
   function runPrompt() {
     return "Run the airship-kpi-monitor skill for every project in my clients.yml and refresh the local dashboard.";
   }
@@ -333,19 +344,58 @@
         return o.j;
       });
   }
+  // Aliases for matching dashboard project names to clients.yml (see serve.py).
+  function projectNameAliases(name) {
+    var n = String(name || "").trim().toLowerCase();
+    var aliases = [n];
+    if (n.slice(-5) === " prod") aliases.push(n.slice(0, -5).replace(/\s+$/, ""));
+    else aliases.push(n + " prod");
+    return aliases;
+  }
+  function namesMatchProject(c, aliases) {
+    var cname = String(c.name || "").toLowerCase();
+    var bname = String(c.brand_name || "").toLowerCase();
+    for (var i = 0; i < aliases.length; i++) {
+      if (cname === aliases[i] || (bname && bname === aliases[i])) return true;
+    }
+    return false;
+  }
   // Find a project's live routing entry in the server state (by name/brand).
   function stateClient(name) {
     if (!APP.state || !APP.state.clients) return null;
-    var t = String(name || "").trim().toLowerCase();
+    var aliases = projectNameAliases(name);
     for (var i = 0; i < APP.state.clients.length; i++) {
-      var c = APP.state.clients[i];
-      if (String(c.name || "").toLowerCase() === t || String(c.brand_name || "").toLowerCase() === t) return c;
+      if (namesMatchProject(APP.state.clients[i], aliases)) return APP.state.clients[i];
     }
     return null;
   }
   function serverOverrides(project) {
     var c = stateClient(project);
     return (c && c.custom_thresholds) || {};
+  }
+  // Dismissed threshold-suggestion keys for a project (live server state first,
+  // then the run snapshot). Suggestions in this set are hidden from both the
+  // inline card and the orphan-suggestions table.
+  function dismissedSet(project, p) {
+    var out = {};
+    var c = stateClient(project);
+    var lists = [(c && c.dismissed_suggestions) || [], (p && p.dismissedSuggestions) || []];
+    lists.forEach(function (l) { (l || []).forEach(function (k) { if (k) out[String(k)] = true; }); });
+    return out;
+  }
+  // Manually-watched KPIs for a project (live server state + run snapshot),
+  // keyed by threshold key. Returns { key: { key, reason, since } }.
+  function watchedMap(project, p) {
+    var out = {};
+    function add(w) {
+      if (!w) return;
+      var k = w.key || w.threshold || w;
+      if (k) out[String(k)] = { key: String(k), reason: w.reason || "", since: w.since || "" };
+    }
+    var c = stateClient(project);
+    ((c && c.watched_alerts) || []).forEach(add);
+    ((p && p.watchedAlerts) || []).forEach(add);
+    return out;
   }
   // Reflect a mute change immediately in the in-memory run data so the Monitor
   // view updates without waiting for the next skill run.
@@ -616,6 +666,120 @@
     return '<svg class="sparkbars" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" aria-hidden="true">' + bars + "</svg>";
   }
 
+  // --- large interactive chart (click-to-expand from a tile sparkline) --------
+  // Pure inline SVG + JS handlers (no library, no external assets → still valid
+  // under file://). Uses the full {t,v} series so points carry dates: hover /
+  // tap / arrow-keys reveal a tooltip (value + date); min & max are marked and
+  // the date axis is labelled. The compact tile sparkline is left untouched.
+  var CHART_GEO = { W: 680, H: 320, padL: 54, padR: 20, padT: 22, padB: 42 };
+  function chartUnitSuffix(unit) {
+    return unit === "%" ? "%" : unit === "pts" ? " pts" : unit === "min" ? " min" : unit === "x" ? "x" : "";
+  }
+  function chartPoints(series) {
+    var g = CHART_GEO;
+    var vals = series.map(function (s) { return Number(s.v); });
+    var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
+    var span = max - min || 1;
+    var plotW = g.W - g.padL - g.padR, plotH = g.H - g.padT - g.padB;
+    var n = series.length;
+    return series.map(function (s, i) {
+      var x = g.padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+      var y = g.padT + (1 - (Number(s.v) - min) / span) * plotH;
+      return { x: x, y: y, v: Number(s.v), t: s.t, i: i };
+    });
+  }
+  function bigChartSvg(series, unit) {
+    var g = CHART_GEO;
+    var pts = chartPoints(series);
+    if (!pts.length) return "";
+    var vals = pts.map(function (p) { return p.v; });
+    var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
+    var us = chartUnitSuffix(unit);
+    var line = pts.map(function (p) { return p.x.toFixed(1) + "," + p.y.toFixed(1); }).join(" ");
+    var area = g.padL + "," + (g.H - g.padB) + " " + line + " " + (g.W - g.padR) + "," + (g.H - g.padB);
+    var yVals = [min, (min + max) / 2, max];
+    var grid = yVals.map(function (val) {
+      var frac = max - min ? (val - min) / (max - min) : 0.5;
+      var y = g.padT + (1 - frac) * (g.H - g.padT - g.padB);
+      return '<line class="bchart__grid" x1="' + g.padL + '" y1="' + y.toFixed(1) + '" x2="' + (g.W - g.padR) + '" y2="' + y.toFixed(1) + '"/>' +
+        '<text class="bchart__ylbl" x="' + (g.padL - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + esc(fmt1(val) + us) + "</text>";
+    }).join("");
+    var xIdx = [0, Math.floor((pts.length - 1) / 2), pts.length - 1].filter(function (v, k, a) { return a.indexOf(v) === k; });
+    var xlabels = xIdx.map(function (i) {
+      var p = pts[i];
+      var d = parseDay(p.t);
+      var lbl = d ? fmtDay(d) : (p.t || "");
+      var anchor = i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle";
+      return '<text class="bchart__xlbl" x="' + p.x.toFixed(1) + '" y="' + (g.H - g.padB + 18) + '" text-anchor="' + anchor + '">' + esc(lbl) + "</text>";
+    }).join("");
+    var maxP = pts.reduce(function (a, b) { return b.v > a.v ? b : a; });
+    var minP = pts.reduce(function (a, b) { return b.v < a.v ? b : a; });
+    var markers =
+      '<circle class="bchart__mark bchart__mark--max" cx="' + maxP.x.toFixed(1) + '" cy="' + maxP.y.toFixed(1) + '" r="4"/>' +
+      '<circle class="bchart__mark bchart__mark--min" cx="' + minP.x.toFixed(1) + '" cy="' + minP.y.toFixed(1) + '" r="4"/>';
+    var dots = pts.map(function (p) { return '<circle class="bchart__dot" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3"/>'; }).join("");
+    var summary = "Line chart of " + series.length + " points \u00B7 min " + fmt1(min) + us + " \u00B7 max " + fmt1(max) + us;
+    return (
+      '<div class="bchart">' +
+        '<svg class="bchart__svg" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="none" role="img" tabindex="0" aria-label="' + esc(summary) + '">' +
+          '<polyline class="bchart__area" points="' + area + '"/>' +
+          grid +
+          '<polyline class="bchart__line" points="' + line + '"/>' +
+          markers + dots +
+          '<line class="bchart__cross" x1="0" y1="' + g.padT + '" x2="0" y2="' + (g.H - g.padB) + '" style="display:none"/>' +
+          '<circle class="bchart__hot" r="5" style="display:none"/>' +
+          xlabels +
+        "</svg>" +
+        '<div class="bchart__tip" role="status" aria-live="polite" hidden></div>' +
+      "</div>"
+    );
+  }
+  function openChart(title, unit, series) {
+    var m = modal({ title: "History \u2014 " + title, bodyHtml: bigChartSvg(series, unit), actions: [] });
+    wireChart(m.body, series, unit);
+    return m;
+  }
+  function wireChart(root, series, unit) {
+    var svg = root.querySelector(".bchart__svg");
+    var tip = root.querySelector(".bchart__tip");
+    var cross = root.querySelector(".bchart__cross");
+    var hot = root.querySelector(".bchart__hot");
+    if (!svg || !series.length) return;
+    var pts = chartPoints(series);
+    var us = chartUnitSuffix(unit);
+    var g = CHART_GEO;
+    var active = -1;
+    function show(i) {
+      if (i < 0 || i >= pts.length) return;
+      active = i;
+      var p = pts[i];
+      cross.setAttribute("x1", p.x); cross.setAttribute("x2", p.x); cross.style.display = "";
+      hot.setAttribute("cx", p.x); hot.setAttribute("cy", p.y); hot.style.display = "";
+      var d = parseDay(p.t);
+      var dlbl = d ? fmtDay(d) : (p.t || "");
+      tip.hidden = false;
+      tip.innerHTML = "<strong>" + esc(fmt1(p.v) + us) + "</strong>" + (dlbl ? ' <span class="bchart__tip-d">' + esc(dlbl) + "</span>" : "");
+      tip.style.left = (p.x / g.W * 100) + "%";
+      tip.style.top = (p.y / g.H * 100) + "%";
+    }
+    function nearest(clientX) {
+      var rect = svg.getBoundingClientRect();
+      var sx = (clientX - rect.left) / rect.width * g.W;
+      var best = 0, bd = Infinity;
+      pts.forEach(function (p) { var dd = Math.abs(p.x - sx); if (dd < bd) { bd = dd; best = p.i; } });
+      return best;
+    }
+    svg.addEventListener("mousemove", function (e) { show(nearest(e.clientX)); });
+    svg.addEventListener("mouseleave", function () { tip.hidden = true; cross.style.display = "none"; hot.style.display = "none"; });
+    svg.addEventListener("touchstart", function (e) { if (e.touches[0]) { show(nearest(e.touches[0].clientX)); e.preventDefault(); } }, { passive: false });
+    svg.addEventListener("touchmove", function (e) { if (e.touches[0]) { show(nearest(e.touches[0].clientX)); e.preventDefault(); } }, { passive: false });
+    svg.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowLeft") { show(Math.max(0, (active < 0 ? pts.length : active) - 1)); e.preventDefault(); }
+      else if (e.key === "ArrowRight") { show(Math.min(pts.length - 1, active + 1)); e.preventDefault(); }
+    });
+    svg.addEventListener("focus", function () { if (active < 0) show(pts.length - 1); });
+  }
+
   // --- alert age ("how long has this been open") -----------------------------
   // An alert that was already present at the previous run shows a small age graph
   // (a horizontal duration bar with weekly ticks) instead of reading like a
@@ -828,15 +992,6 @@
       )
     );
 
-    if (data.priority && !data.isSample) {
-      root.appendChild(
-        el(
-          '<div class="callout"><span class="callout__icon">\uD83D\uDCCC</span><div>' +
-            '<div class="callout__title">Priority focus</div>' + esc(data.priority) +
-          "</div></div>"
-        )
-      );
-    }
 
     var toolbar = el(
       '<div class="toolbar">' +
@@ -1141,7 +1296,6 @@
     var indBtn = '<button class="linkbtn indbtn" type="button" data-project="' + esc(p.name) + '" data-industry="' + esc(ind) +
       '" title="Industry vertical for benchmark comparison">\uD83C\uDFF7\uFE0F ' + (ind ? esc(verticalLabel(ind)) : "Set industry") + "</button>";
     var canvas = p.canvasId ? '<a class="linkbtn" href="' + esc(canvasLink(data, p.canvasId)) + '">\uD83D\uDCCA Canvas</a>' : "";
-    var thr = '<button class="linkbtn thbtn" type="button" data-project="' + esc(p.name) + '">\u2699 Edit thresholds</button>';
     root.appendChild(
       el(
         '<section class="phead' + (sev ? " phead--" + sev : "") + '">' +
@@ -1153,7 +1307,7 @@
               '<span class="phead__when">\uD83D\uDD52 ' + esc(p.lastRun || "\u2014") + "</span>" +
             "</div>" +
           "</div>" +
-          '<div class="phead__actions">' + indBtn + thr + canvas + "</div>" +
+          '<div class="phead__actions">' + indBtn + canvas + "</div>" +
         "</section>"
       )
     );
@@ -1190,15 +1344,22 @@
     // KPI panels by channel
     root.appendChild(kpiPanels(p));
 
-    // Alerts & timeline
-    root.appendChild(alertsTimeline(data, p, pa, cands, resolved));
-
     // Thresholds & suggestions
     root.appendChild(thresholdsPanel(p));
   }
 
   function kpiPanels(p) {
-    var wrap = el('<div class="psection"><h3 class="psection__title">KPI depth</h3><div class="kpanels"></div></div>');
+    var wrap = el(
+      '<div class="psection">' +
+        '<div class="psection__bar">' +
+          '<h3 class="psection__title">All monitored KPIs</h3>' +
+          '<button class="linkbtn linkbtn--ghost thbtn" type="button" data-project="' + esc(p.name) +
+            '" title="Bulk-edit every threshold at once (advanced)">\u2699 Edit all thresholds</button>' +
+        "</div>" +
+        '<p class="psection__hint">Every monitored KPI on this project\u2019s active channels \u2014 value, week-over-week evolution, history and a short read \u2014 with its alert threshold inline to compare and adjust on the card.</p>' +
+        '<div class="kpanels"></div>' +
+      "</div>"
+    );
     var host = wrap.querySelector(".kpanels");
     var metrics = (p.metrics || []).filter(function (m) { return m && m.key; });
     if (!metrics.length) {
@@ -1218,7 +1379,8 @@
     order.forEach(function (grp) {
       var list = byGroup[grp.id];
       if (!list || !list.length) return;
-      var cards = list.map(kpiCard).join("");
+      list.sort(function (a, b) { return familyRank(a) - familyRank(b); });
+      var cards = list.map(function (m) { return kpiCard(m, p); }).join("");
       host.appendChild(
         el('<section class="kpanel"><header class="kpanel__head">' + esc(grp.label) + "</header>" +
           '<div class="kpanel__cards">' + cards + "</div></section>")
@@ -1235,16 +1397,18 @@
     app_opens: { src: "/api/reports/opens", calc: "\u03A3 daily app opens over the 7-day window, per OS (raw count). WoW \u0394% = (current \u2212 previous) \u00F7 previous \u00D7 100." },
     timeinapp: { src: "/api/reports/timeinapp", calc: "Average time-in-app per day (Airship value), per OS. WoW \u0394% vs the previous 7-day window." },
     push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days." },
+    push_pressure_per_user: { src: "/api/reports/sends \u00F7 /api/reports/devices?date=", calc: "Weekly push pressure = push sends (iOS+Android) \u00F7 opted-in devices, per weekly bucket (msg/user/wk). Denominator is the per-week opted-in base via /api/reports/devices?date=<week end> (falls back to the current opted-in snapshot, labelled a proxy, if a week's dated call is unavailable). `series` is the multi-week evolution." },
     optouts: { src: "/api/reports/optouts \u00F7 /api/reports/sends", calc: "\u03A3 push opt-outs over 7 days, per OS. Two signals: RAW COUNT (WoW \u0394%) and the per-send RATE = opt-outs \u00F7 push sends \u00D7 100. The alert fires only when BOTH the raw count rises \u2265 optouts_rise_pct AND the rate worsens \u2265 optout_rate_rise_pct \u2014 so a volume-driven rise (rate flat/down while sends grow) is suppressed." },
-    optins: { src: "/api/reports/optins", calc: "\u03A3 NEW push opt-ins over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days. Distinct from opt-in RATE (opted-in \u00F7 unique devices, from /devices)." },
+    optin_optout_ratio: { src: "/api/reports/optins \u00F7 /api/reports/optouts", calc: "Daily opt-in \u00F7 opt-out ratio, per OS (iOS/Android only \u2014 neither endpoint returns web/SMS series). `series` IS the trend: the daily ratio across the 7-day window (not a separate WoW-only figure). A day with 0 opt-outs is EXCLUDED from the trend average and from `series` (undefined ratio) rather than shown as an artificial spike. WoW \u0394% compares the current window's average ratio to the previous window's. Ratio > 1 = net-positive reach (more opt-ins than opt-outs that day); < 1 = churn-dominant." },
     direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100, per OS, over the 7-day window. WoW \u0394 in percentage points. Tracking-health signal." },
-    devices_unique: { src: "/api/reports/devices", calc: "Unique-devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot." },
-    devices_optin: { src: "/api/reports/devices", calc: "Opted-in devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot. This is the opt-in BASE, not new opt-ins." },
-    devices_uninstall: { src: "/api/reports/devices", calc: "Uninstalled-devices snapshot, per OS. \u0394% vs the canvas D-7 snapshot." },
+    total_devices_evolution: { src: "/api/reports/devices?date=<start> \u00B7 ?date=<end>", calc: "Total unique-device evolution, per OS + total = % growth/decline between two dated /api/reports/devices calls. GET /api/reports/devices?date=<date-time> counts all device events that occurred before that date-time and returns total_unique_devices + counts.{ios,android,\u2026}.unique_devices; evolution = (end \u2212 start) \u00F7 start \u00D7 100 over the window (start = window start, end = window end / today). Merges the former installs proxy and unique-devices trend into one." },
+    devices_optin: { src: "/api/reports/devices?date=", calc: "Opted-in devices two-date evolution, per OS \u2014 the opt-in BASE, not opt-in events (see App & engagement \u2192 Opt-in/opt-out ratio for the event-level signal). \u0394% = change of counts.{os}.opted_in between the window-start and window-end dated calls." },
+    devices_uninstall: { src: "/api/reports/devices?date=", calc: "Uninstalled-devices two-date evolution, per OS. \u0394% = change of counts.{os}.uninstalled between the window-start and window-end dated calls (a rise beyond the ceiling alerts)." },
     email_sends: { src: "/api/reports/sends", calc: "\u03A3 emails sent over 7 days (field `email`). WoW \u0394% vs previous 7 days." },
     email_deliverability: { src: "/api/reports/events", calc: "Delivered \u00F7 injected \u00D7 100 over the window (absolute rate)." },
     email_open_rate: { src: "/api/reports/events", calc: "Deduplicated opens (`initial_open`) \u00F7 delivered \u00D7 100. WoW \u0394 in percentage points." },
     email_bounce: { src: "/api/reports/events", calc: "Bounces \u00F7 injected \u00D7 100 over the window (absolute rate)." },
+    email_unsubscribe: { src: "/api/reports/events", calc: "Email unsubscribes over the window; WoW \u0394% vs the previous 7 days." },
     email_spam_complaint_rate: { src: "/api/reports/events", calc: "Daily spam_complaint \u00F7 delivery \u00D7 100 (precision=DAILY)." },
     email_delay_rate: { src: "/api/reports/events", calc: "Hourly delay \u00F7 delivery \u00D7 100 (precision=HOURLY), confirmed over \u2265 N consecutive hours." },
     web_sends: { src: "/api/reports/sends", calc: "\u03A3 web-push sends over 7 days (field `web`). WoW \u0394% vs previous 7 days." },
@@ -1252,8 +1416,11 @@
     sms_delivery_rate: { src: "/api/reports/events", calc: "Delivered \u00F7 dispatched \u00D7 100 (SMS delivery-report events)." },
     custom_event: { src: "/api/reports/events", calc: "\u03A3 custom-event count over 7 days. WoW \u0394% vs previous 7 days." },
   };
-  // Resolve the provenance entry for a metric key by longest matching family.
-  function kpiMeta(key) {
+  // Resolve the KPI family name for a metric key by longest matching family.
+  // Canonical metric keys equal the family name exactly (e.g. "optouts",
+  // "direct_response_rate"); the longest-prefix fallback keeps old snapshots that
+  // baked OS/direction into the key (e.g. "optouts_ios") still resolving.
+  function kpiFamily(key) {
     var k = String(key || "");
     var best = null;
     Object.keys(KPI_META).forEach(function (fam) {
@@ -1261,20 +1428,188 @@
         if (!best || fam.length > best.length) best = fam;
       }
     });
-    return best ? KPI_META[best] : null;
+    return best;
+  }
+  // Resolve the provenance entry for a metric key by longest matching family.
+  function kpiMeta(key) {
+    var fam = kpiFamily(key);
+    return fam ? KPI_META[fam] : null;
+  }
+  // Canonical within-section ordering of KPI families, so cards render in a
+  // consistent, sensible order regardless of the emit order in dashboard-data.js.
+  var FAMILY_ORDER = [
+    "app_opens", "timeinapp", "optin_optout_ratio",
+    "push_sends", "push_pressure_per_user", "optouts", "direct_response_rate",
+    "total_devices_evolution", "devices_optin", "devices_uninstall",
+    "email_sends", "email_deliverability", "email_open_rate", "email_bounce",
+    "email_unsubscribe", "email_spam_complaint_rate", "email_delay_rate",
+    "web_sends",
+    "sms_sends", "sms_delivery_rate",
+    "custom_event",
+  ];
+  function familyRank(m) {
+    var i = FAMILY_ORDER.indexOf(kpiFamily(m && m.key));
+    return i === -1 ? FAMILY_ORDER.length : i;
   }
 
-  function kpiCard(m) {
+  // The skill's suggestion for a given threshold key (shown inline on the card).
+  function metricSuggestion(p, key) {
+    var list = (p && p.thresholdSuggestions) || [];
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].key === key) return list[i];
+    return null;
+  }
+
+  // Inline threshold editor rendered on each KPI card, right under the headroom
+  // gauge — so the alert threshold sits next to the live result and its chart and
+  // can be read, compared and adjusted in place (no centralized modal needed).
+  function inlineThreshold(p, m) {
+    var t = m.threshold;
+    if (!t || !t.key) return "";
+    var key = t.key;
+    var it = catalogItem(key);
+    var unit = it && it.unit ? it.unit : "";
+    var uSuffix = unit === "pts" ? " pts" : unit === "%" ? "%" : "";
+    var ov = serverOverrides(p.name)[key];
+    var def = it && it.default != null ? it.default : null;
+    var effective = ov != null ? ov : (t.value != null ? t.value : def);
+    var kindTxt = t.kind ? esc(t.kind) : "";
+    var badge = ov != null
+      ? '<span class="kthr__tag kthr__tag--ov" title="Custom threshold in your clients.yml">override</span>'
+      : '<span class="kthr__tag kthr__tag--def" title="Skill default (no override)">default</span>';
+
+    var s = metricSuggestion(p, key);
+    var dismissed = dismissedSet(p.name, p);
+    var sugHtml = "";
+    if (s && !dismissed[key]) {
+      var isApplied = ov != null && Number(ov) === Number(s.suggested);
+      var dirArrow = s.direction === "tighten" ? "\u25BC tighten" : "\u25B2 loosen";
+      var conf = s.confidence || "low";
+      var basisLbl = { volatility: "volatility", false_positives: "false positives", headroom: "chronic headroom" }[s.basis] || (s.basis || "");
+      sugHtml =
+        '<div class="kthr__sug' + (isApplied ? " kthr__sug--applied" : "") + '">' +
+          '<div class="kthr__sug-head">' +
+            '<span class="th__dir th__dir--' + esc(s.direction || "") + '">' + dirArrow + "</span>" +
+            '<span class="kthr__sug-val">suggest <strong>' + esc(s.suggested) + esc(uSuffix) + "</strong></span>" +
+            '<span class="th__conf th__conf--' + esc(conf) + '" title="Confidence">' + esc(conf) + "</span>" +
+            (isApplied
+              ? '<span class="kthr__applied">\u2713 applied</span>'
+              : '<button class="btn btn--sm btn--primary kthr-apply" type="button" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '" data-val="' + esc(s.suggested) + '">Apply</button>') +
+            '<button class="btn btn--sm kthr-dismiss" type="button" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '" title="Dismiss this suggestion (the skill stops re-emitting it)">Dismiss</button>' +
+          "</div>" +
+          '<div class="th__why"><span class="th__basis">' + esc(basisLbl) + "</span> " + esc(s.rationale || "") + "</div>" +
+        "</div>";
+    }
+
+    var watched = watchedMap(p.name, p)[key];
+    var watchBtn = watched
+      ? '<button class="btn btn--sm kthr-unwatch" type="button" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '" title="' + esc("Watching: " + (watched.reason || "manual watch")) + '">\uD83D\uDC41 Watching</button>'
+      : '<button class="btn btn--sm kthr-watch" type="button" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '" title="Manually watch this KPI (surfaced even without a breach)">\uD83D\uDC41 Watch</button>';
+
+    return (
+      '<div class="kthr" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '"' +
+        (def != null ? ' data-default="' + esc(def) + '"' : "") + ">" +
+        '<div class="kthr__row">' +
+          '<span class="kthr__lbl">Alert threshold' + (kindTxt ? ' <span class="kthr__kind">' + kindTxt + "</span>" : "") + "</span>" +
+          '<span class="kthr__ctl">' +
+            '<input class="kthr__input" type="number" step="any" inputmode="decimal" value="' +
+              esc(effective == null ? "" : effective) + '" placeholder="' + esc(def == null ? "" : def) +
+              '" aria-label="Alert threshold for ' + esc(it ? it.label : key) + '" />' +
+            (uSuffix ? '<span class="kthr__unit">' + esc(uSuffix.trim()) + "</span>" : "") +
+            '<button class="btn btn--sm btn--primary kthr-set" type="button">Set</button>' +
+            '<button class="btn btn--sm kthr-reset" type="button" title="Reset to default' +
+              (def != null ? " (" + esc(def) + esc(uSuffix) + ")" : "") + '">Reset</button>' +
+            watchBtn +
+            badge +
+          "</span>" +
+        "</div>" +
+        sugHtml +
+      "</div>"
+    );
+  }
+
+  // Per-KPI analysis sentence: prefer the skill-authored, client-contextualized
+  // `analysis`; otherwise fall back to a deterministic one-liner built from the
+  // numbers we already have (WoW direction/magnitude + headroom / breach state).
+  function analysisText(m) {
+    if (m.analysis && String(m.analysis).trim()) return String(m.analysis).trim();
+    return metricAnalysisFallback(m);
+  }
+  function metricAnalysisFallback(m) {
+    if (m.status === "na") return "Below the minimum-volume floor \u2014 not evaluated this run.";
+    var parts = [];
+    var d = typeof m.deltaPts === "number" ? m.deltaPts : (typeof m.deltaPct === "number" ? m.deltaPct : null);
+    var unit = typeof m.deltaPts === "number" ? " pts" : "%";
+    if (d != null) {
+      if (d === 0) parts.push("Flat week over week");
+      else parts.push((d > 0 ? "Up" : "Down") + " " + fmt1(Math.abs(d)) + unit + " week over week");
+    }
+    var t = m.threshold;
+    if (t) {
+      if (t.breaching) parts.push("breaching its alert threshold");
+      else if (typeof t.headroom === "number") {
+        var u = thresholdUnit(t);
+        var us = u === "pts" ? " pts" : u === "%" ? "%" : "";
+        parts.push(fmt1(t.headroom) + us + " of headroom before alert");
+      }
+    }
+    if (!parts.length) return "";
+    return parts.join(" \u00B7 ") + ".";
+  }
+
+  // Find alertsList entries that relate to metric m by substring-matching the
+  // family key. A small override map handles the two device families where the OS
+  // is injected in the middle of the alert key (e.g. devices_ios_optin_drop).
+  var _ALERT_ALT = { devices_optin: "optin_drop", devices_uninstall: "uninstall_rise" };
+  function alertsForMetric(p, m) {
+    if (!m || !m.key) return [];
+    var mk = m.key.toLowerCase().replace(/_rate$/, "");
+    var alt = _ALERT_ALT[m.key];
+    return (p.alertsList || []).filter(function (a) {
+      if (!a || !a.key) return false;
+      var ak = a.key.toLowerCase();
+      return ak.indexOf(mk) !== -1 || (alt && ak.indexOf(alt) !== -1);
+    });
+  }
+
+  function kpiCard(m, p) {
     var t = m.threshold || {};
+    // Per-OS row. Each OS shows its WoW delta chip when a `deltaPct` is present
+    // (volume/rate KPIs), else its current absolute snapshot `value` (device /
+    // installs snapshots that have no computable D-7 delta this run). Includes
+    // web when the metric carries it.
     var osHtml = "";
-    if (m.os && (m.os.ios || m.os.android)) {
+    if (m.os) {
       var parts = [];
-      if (m.os.ios && typeof m.os.ios.deltaPct === "number") parts.push('<span class="os">iOS ' + deltaChip({ deltaPct: m.os.ios.deltaPct }) + "</span>");
-      if (m.os.android && typeof m.os.android.deltaPct === "number") parts.push('<span class="os">Android ' + deltaChip({ deltaPct: m.os.android.deltaPct }) + "</span>");
+      [["ios", "iOS"], ["android", "Android"], ["web", "Web"]].forEach(function (pair) {
+        var o = m.os[pair[0]];
+        if (!o) return;
+        if (typeof o.deltaPct === "number") parts.push('<span class="os">' + pair[1] + " " + deltaChip({ deltaPct: o.deltaPct }) + "</span>");
+        else if (typeof o.value === "number") parts.push('<span class="os">' + pair[1] + " " + fmtCount(o.value) + "</span>");
+      });
       if (parts.length) osHtml = '<div class="kcard__os">' + parts.join("") + "</div>";
     }
-    var series = (m.series || []).map(function (s) { return typeof s === "object" ? s.v : s; });
-    var sparkHtml = series.length >= 2 ? '<div class="kcard__spark">' + lineSparkline(series, 150, 30) + "</div>" : "";
+    // Keep full {t,v} points so the click-to-expand chart can label dates; the
+    // compact tile sparkline still uses values only (density unchanged).
+    var fullSeries = (m.series || []).map(function (s) {
+      return typeof s === "object" ? { t: s.t, v: s.v } : { t: null, v: s };
+    });
+    var series = fullSeries.map(function (s) { return s.v; });
+    // History chart is always represented: a compact sparkline once there are ≥2
+    // points (wrapped in a click-to-expand affordance opening a large interactive
+    // chart), otherwise a discreet "history building" placeholder (skipped for na).
+    var sparkHtml;
+    if (series.length >= 2) {
+      var seriesAttr = esc(encodeURIComponent(JSON.stringify(fullSeries)));
+      sparkHtml =
+        '<button class="kcard__spark kcard__spark-expand" type="button"' +
+          ' data-series="' + seriesAttr + '" data-label="' + esc(m.label || m.key) + '" data-unit="' + esc(m.unit || "") + '"' +
+          ' title="Expand interactive chart" aria-label="Expand history chart for ' + esc(m.label || m.key) + '">' +
+          lineSparkline(series, 150, 30) +
+          '<span class="kcard__spark-hint">\u2922 expand</span>' +
+        "</button>";
+    } else {
+      sparkHtml = m.status === "na" ? "" : '<div class="kcard__spark kcard__spark--empty">\uD83D\uDCC8 History building\u2026</div>';
+    }
     // Opt-out (and any rate-correlated) metrics carry a `rate` object so the raw
     // count is read alongside the per-send rate that actually drives the alert.
     var rateHtml = "";
@@ -1297,6 +1632,8 @@
       }
     }
     var noteHtml = m.note ? '<div class="kcard__note">' + esc(m.note) + "</div>" : "";
+    var aTxt = analysisText(m);
+    var analysisHtml = aTxt ? '<p class="kcard__analysis">' + esc(aTxt) + "</p>" : "";
     var meta = kpiMeta(m.key);
     var metaHtml = meta
       ? '<details class="kcard__meta"><summary>Source &amp; calc</summary>' +
@@ -1304,101 +1641,124 @@
           '<div class="kcard__calc">' + esc(meta.calc) + "</div>" +
         "</details>"
       : "";
+    var wKey = m.threshold && m.threshold.key;
+    var watching = wKey ? watchedMap(p.name, p)[wKey] : null;
+    // Inline mute/unmute — mirrors the alertsDetail flow using the first matching
+    // alertsList entry's key so applyMuteLocal updates in-memory state immediately.
+    var alertMatches = alertsForMetric(p, m);
+    var isMuted = m.status === "muted";
+    var isAlertActive = m.status === "confirmed" || m.status === "candidate";
+    var muteHtml = "";
+    if (isMuted) {
+      var uEntry = alertMatches.filter(function (a) { return a.muted; })[0];
+      var uKey = uEntry ? uEntry.key : (m.threshold && m.threshold.key || m.key);
+      muteHtml = '<button class="mutebtn mutebtn--unmute kcard__mutebtn" type="button"' +
+        ' data-action="unmute" data-project="' + esc(p.name) + '" data-key="' + esc(uKey) + '">Unmute</button>';
+    } else if (isAlertActive) {
+      var mEntry = alertMatches.filter(function (a) { return !a.muted; })[0];
+      var mKey = mEntry ? mEntry.key : (m.threshold && m.threshold.key || m.key);
+      muteHtml = '<button class="mutebtn kcard__mutebtn" type="button"' +
+        ' data-action="mute" data-project="' + esc(p.name) + '" data-key="' + esc(mKey) + '">Mute</button>';
+    }
+    // Cause / openedAt from the matching alertsList entry (confirmed, candidate, muted).
+    var causeEntry = isMuted
+      ? alertMatches.filter(function (a) { return a.muted; })[0] || alertMatches[0]
+      : alertMatches.filter(function (a) { return !a.muted; })[0] || alertMatches[0];
+    var causeHtml = "";
+    if (causeEntry && (causeEntry.cause || causeEntry.note || causeEntry.openedAt)) {
+      var causeText = causeEntry.cause || causeEntry.note || "";
+      var muteReasonTxt = causeEntry.muted && causeEntry.reason ? " \u00B7 Muted: " + causeEntry.reason : "";
+      causeHtml = '<div class="kcard__alert-cause">' +
+        (causeEntry.openedAt ? '<span class="kcard__alert-since">Since ' + esc(causeEntry.openedAt) + "</span> " : "") +
+        (causeText ? esc(causeText) : "") +
+        (muteReasonTxt ? ' <span class="kcard__mute-reason">' + esc(muteReasonTxt) + "</span>" : "") +
+      "</div>";
+    }
+    // Watch chip: reason shown as a visible block below the header row, not just tooltip.
+    var watchChipHtml = watching ? '<span class="mstatus mstatus--watch">\uD83D\uDC41 Watching</span>' : "";
+    var watchReasonHtml = (watching && watching.reason)
+      ? '<div class="kcard__watch-reason">' + esc(watching.reason) + "</div>"
+      : "";
     return (
-      '<article class="kcard kcard--' + metricStatus(m).c + '">' +
+      '<article class="kcard kcard--' + metricStatus(m).c + (watching ? " kcard--watching" : "") + '">' +
         '<div class="kcard__top">' +
           '<div class="kcard__ident"><span class="kcard__label">' + esc(m.label || m.key) + "</span>" +
             '<code class="kcard__key">' + esc(m.key) + "</code></div>" +
+          watchChipHtml +
           statusChip(m) +
+          muteHtml +
         "</div>" +
+        watchReasonHtml +
+        causeHtml +
         '<div class="kcard__vals">' +
           '<span class="kcard__cur">' + fmtVal(m.current, m.unit) + "</span>" +
-          '<span class="kcard__prev">prev ' + fmtVal(m.previous, m.unit) + "</span>" +
-          '<span class="kcard__wow">WoW ' + deltaChip(m) + "</span>" +
+          (typeof m.previous === "number" ? '<span class="kcard__prev">prev ' + fmtVal(m.previous, m.unit) + "</span>" : "") +
+          (deltaChip(m) ? '<span class="kcard__wow">WoW ' + deltaChip(m) + "</span>" : "") +
         "</div>" +
         rateHtml +
+        analysisHtml +
         noteHtml +
         osHtml +
         sparkHtml +
         headroomGauge(t, thresholdUnit(t)) +
+        inlineThreshold(p, m) +
         metaHtml +
       "</article>"
     );
   }
 
-  function alertsTimeline(data, p, pa, cands, resolved) {
-    var wrap = el('<div class="psection"><h3 class="psection__title">Alerts &amp; timeline</h3><div class="panel ptimeline"></div></div>');
-    var host = wrap.querySelector(".ptimeline");
-    var alertsHtml = pa.list && pa.list.length
-      ? alertsDetail(p.name, pa.list, data.generatedAt)
-      : '<div class="proj__empty">\u2713 No confirmed alerts</div>';
-    host.appendChild(el('<div class="tblock"><div class="proj__label">Confirmed alerts</div>' + alertsHtml + "</div>"));
-    if (cands.length) {
-      host.appendChild(el('<div class="tblock"><div class="proj__label">\uD83D\uDD0E Watching \u00B7 not yet confirmed</div>' + candidatesDetail(cands) + "</div>"));
-    }
-    if (resolved.length) {
-      var rows = resolved.map(function (r) {
-        return '<li class="resolved"><span class="resolved__mark">\u2713</span>' +
-          '<code class="alert__key">' + esc(r.key) + "</code>" +
-          (r.resolvedAt ? '<span class="resolved__when">' + esc(r.resolvedAt) + "</span>" : "") +
-          (r.cause ? '<span class="alert__cause">' + esc(r.cause) + "</span>" : "") + "</li>";
-      }).join("");
-      host.appendChild(el('<div class="tblock"><div class="proj__label">\u2705 Recently resolved</div><ul class="resolvedlist">' + rows + "</ul></div>"));
-    }
-    return wrap;
-  }
+  function alertsTimeline() { return document.createDocumentFragment(); }
 
-  // Thresholds & suggestions panel: effective value, skill suggestion + rationale
-  // + confidence, and Apply / Edit / Reset actions.
+  // Threshold suggestions that have no matching KPI card this run (so they can't be
+  // shown inline). Per-KPI thresholds are now edited inline on each card; this panel
+  // only surfaces these "orphan" suggestions so nothing is lost. Returns an empty
+  // fragment (renders nothing) when every suggestion is already shown inline.
   function thresholdsPanel(p) {
-    var suggestions = (p.thresholdSuggestions || []).filter(function (s) { return s && s.key; });
+    var shownKeys = {};
+    (p.metrics || []).forEach(function (m) { if (m && m.threshold && m.threshold.key) shownKeys[m.threshold.key] = true; });
+    var dismissed = dismissedSet(p.name, p);
+    var orphans = (p.thresholdSuggestions || []).filter(function (s) { return s && s.key && !shownKeys[s.key] && !dismissed[s.key]; });
+    if (!orphans.length) return document.createDocumentFragment();
+
     var overrides = serverOverrides(p.name);
-    var wrap = el('<div class="psection"><h3 class="psection__title">Thresholds &amp; suggestions</h3><div class="panel thpanel"></div></div>');
+    var wrap = el('<div class="psection"><h3 class="psection__title">Other threshold suggestions</h3><div class="panel thpanel"></div></div>');
     var host = wrap.querySelector(".thpanel");
+    host.appendChild(el('<p class="note">Suggestions for KPIs not evaluated in this run (no card above). ' +
+      (APP.serverMode ? "Apply writes your local clients.yml." : "Apply/Reset copy a prompt for Cursor chat.") + "</p>"));
 
-    var intro = APP.serverMode
-      ? "Suggestions are computed by the skill from this project\u2019s observed volatility, muted/resolved false positives and chronic headroom. Apply writes your local clients.yml."
-      : "Suggestions are computed by the skill. Start the local server to apply them in one click \u2014 otherwise Apply/Reset copy a prompt for Cursor chat.";
-    host.appendChild(el('<p class="note">' + esc(intro) + '</p>'));
-
-    if (!suggestions.length) {
-      host.appendChild(el('<div class="thempty">\u2713 No threshold adjustments suggested \u2014 current thresholds look well-tuned for this project.</div>'));
-    } else {
-      var rows = suggestions.map(function (s) {
-        var it = catalogItem(s.key);
-        var unit = it && it.unit ? (it.unit === "pts" ? " pts" : it.unit === "%" ? "%" : "") : "";
-        var eff = overrides[s.key];
-        var effVal = eff != null ? eff : (s.current != null ? s.current : (it ? it.default : "\u2014"));
-        var dirArrow = s.direction === "tighten" ? "\u25BC tighten" : "\u25B2 loosen";
-        var conf = s.confidence || "low";
-        var basisLbl = { volatility: "volatility", false_positives: "false positives", headroom: "chronic headroom" }[s.basis] || (s.basis || "");
-        var isApplied = eff != null && Number(eff) === Number(s.suggested);
-        return (
-          "<tr" + (isApplied ? ' class="th__row--applied"' : "") + ">" +
-            '<td class="th__k"><span class="th__label">' + esc(it ? it.label : s.key) + "</span><code>" + esc(s.key) + "</code></td>" +
-            '<td class="th__eff">' + esc(effVal) + esc(unit) + (eff != null ? ' <span class="th__ov">' + (isApplied ? "\u2713 applied" : "override") + "</span>" : "") + "</td>" +
-            '<td class="th__sug"><span class="th__dir th__dir--' + esc(s.direction || "") + '">' + dirArrow + "</span> " +
-              '<strong>' + esc(s.suggested) + esc(unit) + "</strong>" +
-              '<span class="th__conf th__conf--' + esc(conf) + '" title="Confidence">' + esc(conf) + "</span>" +
-              '<div class="th__why"><span class="th__basis">' + esc(basisLbl) + "</span> " + esc(s.rationale || "") + "</div></td>" +
-            '<td class="th__act">' +
-              (isApplied
-                ? '<span class="th__applied-badge">\u2713 Applied</span>'
-                : '<button class="btn btn--sm btn--primary th-apply" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '" data-val="' + esc(s.suggested) + '">Apply</button>') +
-              '<button class="btn btn--sm th-edit" data-project="' + esc(p.name) + '">Edit</button>' +
-              '<button class="btn btn--sm th-reset" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '">Reset</button>' +
-            "</td>" +
-          "</tr>"
-        );
-      }).join("");
-      host.appendChild(
-        el(
-          '<table class="thtable"><thead><tr><th>Threshold</th><th>Effective</th><th>Suggested</th><th></th></tr></thead>' +
-            "<tbody>" + rows + "</tbody></table>"
-        )
+    var rows = orphans.map(function (s) {
+      var it = catalogItem(s.key);
+      var unit = it && it.unit ? (it.unit === "pts" ? " pts" : it.unit === "%" ? "%" : "") : "";
+      var eff = overrides[s.key];
+      var effVal = eff != null ? eff : (s.current != null ? s.current : (it ? it.default : "\u2014"));
+      var dirArrow = s.direction === "tighten" ? "\u25BC tighten" : "\u25B2 loosen";
+      var conf = s.confidence || "low";
+      var basisLbl = { volatility: "volatility", false_positives: "false positives", headroom: "chronic headroom" }[s.basis] || (s.basis || "");
+      var isApplied = eff != null && Number(eff) === Number(s.suggested);
+      return (
+        "<tr" + (isApplied ? ' class="th__row--applied"' : "") + ">" +
+          '<td class="th__k"><span class="th__label">' + esc(it ? it.label : s.key) + "</span><code>" + esc(s.key) + "</code></td>" +
+          '<td class="th__eff">' + esc(effVal) + esc(unit) + (eff != null ? ' <span class="th__ov">' + (isApplied ? "\u2713 applied" : "override") + "</span>" : "") + "</td>" +
+          '<td class="th__sug"><span class="th__dir th__dir--' + esc(s.direction || "") + '">' + dirArrow + "</span> " +
+            '<strong>' + esc(s.suggested) + esc(unit) + "</strong>" +
+            '<span class="th__conf th__conf--' + esc(conf) + '" title="Confidence">' + esc(conf) + "</span>" +
+            '<div class="th__why"><span class="th__basis">' + esc(basisLbl) + "</span> " + esc(s.rationale || "") + "</div></td>" +
+          '<td class="th__act">' +
+            (isApplied
+              ? '<span class="th__applied-badge">\u2713 Applied</span>'
+              : '<button class="btn btn--sm btn--primary th-apply" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '" data-val="' + esc(s.suggested) + '">Apply</button>') +
+            '<button class="btn btn--sm th-reset" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '">Reset</button>' +
+            '<button class="btn btn--sm th-dismiss" data-project="' + esc(p.name) + '" data-key="' + esc(s.key) + '" title="Dismiss this suggestion (the skill stops re-emitting it)">Dismiss</button>' +
+          "</td>" +
+        "</tr>"
       );
-    }
-    host.appendChild(el('<div class="thpanel__foot"><button class="btn thbtn" type="button" data-project="' + esc(p.name) + '">\u2699 Edit all thresholds</button></div>'));
+    }).join("");
+    host.appendChild(
+      el(
+        '<table class="thtable"><thead><tr><th>Threshold</th><th>Effective</th><th>Suggested</th><th></th></tr></thead>' +
+          "<tbody>" + rows + "</tbody></table>"
+      )
+    );
     return wrap;
   }
 
@@ -1410,11 +1770,72 @@
       .then(function () { rerender(); toast("Applied " + key + " = " + val); })
       .catch(function (e) { toast("Error: " + e.message, "danger"); });
   }
+  // Persist a manually-typed threshold (served: POST; file://: copy-prompt).
+  function saveThreshold(project, key, val) {
+    if (!APP.serverMode) { copyModal("Set threshold \u2014 paste into chat", setThresholdPrompt(project, key, val)); return; }
+    var o = {}; o[key] = Number(val);
+    api("/api/thresholds", { project: project, overrides: o })
+      .then(function () { rerender(); toast("Set " + key + " = " + val); })
+      .catch(function (e) { toast("Error: " + e.message, "danger"); });
+  }
+  // Inline "Set": validate the card input, then persist — blank or the default value
+  // clears the override (reset) so the card falls back to the skill default.
+  function inlineThresholdSave(box) {
+    var project = box.getAttribute("data-project");
+    var key = box.getAttribute("data-key");
+    var input = box.querySelector(".kthr__input");
+    var raw = String(input.value || "").trim();
+    if (raw === "") { resetThreshold(project, key); return; }
+    var num = Number(raw);
+    if (isNaN(num)) { input.classList.add("bad"); toast("Enter a number", "danger"); return; }
+    input.classList.remove("bad");
+    var defAttr = box.getAttribute("data-default");
+    var def = defAttr == null || defAttr === "" ? null : Number(defAttr);
+    if (def != null && num === def) { resetThreshold(project, key); return; }
+    saveThreshold(project, key, num);
+  }
   function resetThreshold(project, key) {
     if (!APP.serverMode) { copyModal("Reset threshold \u2014 paste into chat", resetThresholdPrompt(project, key)); return; }
     var o = {}; o[key] = null;
     api("/api/thresholds", { project: project, overrides: o })
       .then(function () { rerender(); toast("Reset " + key + " to default"); })
+      .catch(function (e) { toast("Error: " + e.message, "danger"); });
+  }
+  // Dismiss a threshold suggestion (served: POST; file://: copy-prompt). The skill
+  // reads clients.yml `dismissed_suggestions` and stops re-emitting the suggestion.
+  function dismissSuggestion(project, key) {
+    if (!APP.serverMode) { copyModal("Dismiss suggestion \u2014 paste into chat", dismissSuggestionPrompt(project, key)); return; }
+    api("/api/dismiss-suggestion", { project: project, key: key })
+      .then(function () { rerender(); toast("Dismissed suggestion " + key); })
+      .catch(function (e) { toast("Error: " + e.message, "danger"); });
+  }
+  // Manually watch a KPI (even with no breach), capturing a reason (served: POST;
+  // file://: copy-prompt). The skill echoes watched KPIs in the dashboard.
+  function watchKpi(project, key) {
+    if (!APP.serverMode) { copyModal("Watch KPI \u2014 paste into chat", watchKpiPrompt(project, key, "")); return; }
+    var m = modal({
+      title: "Watch KPI",
+      bodyHtml:
+        '<p class="dialog__hint">Manually watch <code>' + esc(key) + "</code> on <strong>" + esc(project) + "</strong> \u2014 " +
+        "it stays surfaced in the dashboard (with a \u201Cwatching\u201D chip and in the timeline) even when it is not breaching.</p>" +
+        '<label class="fld"><span>Reason</span>' +
+        '<textarea class="dialog__text" id="wReason" rows="3" placeholder="Why keep an eye on this KPI?"></textarea></label>',
+      actions: [
+        { label: "Watch", primary: true, onClick: function (close, dlg, st) {
+          var r = dlg.querySelector("#wReason").value.trim();
+          st.textContent = "Saving\u2026";
+          api("/api/watch", { project: project, key: key, reason: r })
+            .then(function () { close(); rerender(); toast("Watching " + key); })
+            .catch(function (e) { st.style.color = "var(--danger)"; st.textContent = "Error: " + e.message; });
+        } },
+      ],
+    });
+  }
+  function unwatchKpi(project, key) {
+    if (!APP.serverMode) { copyModal("Stop watching \u2014 paste into chat", unwatchKpiPrompt(project, key)); return; }
+    if (!window.confirm('Stop watching "' + key + '" for ' + project + "?")) return;
+    api("/api/unwatch", { project: project, key: key })
+      .then(function () { rerender(); toast("Stopped watching " + key); })
       .catch(function (e) { toast("Error: " + e.message, "danger"); });
   }
 
@@ -1695,15 +2116,52 @@
       copyModal("Run the skill \u2014 paste into chat", runPrompt());
     });
 
-    // Deep-page threshold suggestions: Apply / Reset (Edit uses .thbtn below).
+    // Orphan-suggestion table (thresholdsPanel): Apply / Reset.
     root.querySelectorAll(".th-apply").forEach(function (b) {
       b.addEventListener("click", function () { applySuggestion(b.getAttribute("data-project"), b.getAttribute("data-key"), b.getAttribute("data-val")); });
     });
     root.querySelectorAll(".th-reset").forEach(function (b) {
       b.addEventListener("click", function () { resetThreshold(b.getAttribute("data-project"), b.getAttribute("data-key")); });
     });
-    root.querySelectorAll(".th-edit").forEach(function (b) {
-      b.addEventListener("click", function () { openThresholds(b.getAttribute("data-project")); });
+
+    // Inline per-KPI threshold editing (on each KPI card): Set / Reset / Apply.
+    root.querySelectorAll(".kthr-set").forEach(function (b) {
+      b.addEventListener("click", function () { inlineThresholdSave(b.closest(".kthr")); });
+    });
+    root.querySelectorAll(".kthr-reset").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var box = b.closest(".kthr");
+        resetThreshold(box.getAttribute("data-project"), box.getAttribute("data-key"));
+      });
+    });
+    root.querySelectorAll(".kthr-apply").forEach(function (b) {
+      b.addEventListener("click", function () { applySuggestion(b.getAttribute("data-project"), b.getAttribute("data-key"), b.getAttribute("data-val")); });
+    });
+    // Dismiss a threshold suggestion (inline card + orphan table).
+    root.querySelectorAll(".kthr-dismiss, .th-dismiss").forEach(function (b) {
+      b.addEventListener("click", function () { dismissSuggestion(b.getAttribute("data-project"), b.getAttribute("data-key")); });
+    });
+    // Watch / unwatch a KPI (inline card + timeline unwatch).
+    root.querySelectorAll(".kthr-watch").forEach(function (b) {
+      b.addEventListener("click", function () { watchKpi(b.getAttribute("data-project"), b.getAttribute("data-key")); });
+    });
+    root.querySelectorAll(".kthr-unwatch").forEach(function (b) {
+      b.addEventListener("click", function () { unwatchKpi(b.getAttribute("data-project"), b.getAttribute("data-key")); });
+    });
+    // Click-to-expand the tile sparkline into a large interactive chart.
+    root.querySelectorAll(".kcard__spark-expand").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var raw = b.getAttribute("data-series");
+        var series;
+        try { series = JSON.parse(decodeURIComponent(raw)); } catch (e) { series = null; }
+        if (series && series.length) openChart(b.getAttribute("data-label") || "History", b.getAttribute("data-unit") || "", series);
+      });
+    });
+    // Enter in an inline threshold input commits the change.
+    root.querySelectorAll(".kthr__input").forEach(function (inp) {
+      inp.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); inlineThresholdSave(inp.closest(".kthr")); }
+      });
     });
 
     // collapse/expand a card

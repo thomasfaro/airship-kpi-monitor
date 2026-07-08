@@ -17,9 +17,8 @@
 window.AIRSHIP_KPI_THRESHOLDS = {
   "groups": [
     { "id": "app", "label": "App & engagement" },
-    { "id": "devices", "label": "Devices" },
-    { "id": "push", "label": "Push (mobile)" },
-    { "id": "acquisition", "label": "Acquisition / opt-ins" },
+    { "id": "push", "label": "Push" },
+    { "id": "acquisition", "label": "Acquisition & opt-ins" },
     { "id": "email", "label": "Email" },
     { "id": "web", "label": "Web push" },
     { "id": "sms", "label": "SMS" },
@@ -32,18 +31,18 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "key": "app_opens_drop_pct", "label": "App opens drop", "group": "app", "unit": "%", "default": 40, "hint": "WoW drop > X% on that OS -> alert (per OS)" },
     { "key": "app_opens_cross_os_gap_pts", "label": "App opens iOS/Android gap", "group": "app", "unit": "pts", "default": 50, "hint": "OR |iOS WoW - Android WoW| > X pts -> alert on BOTH OS" },
     { "key": "timeinapp_drop_pct", "label": "Time-in-app drop", "group": "app", "unit": "%", "default": 20, "hint": "Avg time-in-app drop > X% (per OS) -> alert" },
-
-    { "key": "devices_unique_drop_pct", "label": "Unique devices drop", "group": "devices", "unit": "%", "default": 5, "hint": "Drop > X% vs canvas D-7 snapshot (per OS) -> alert" },
-    { "key": "devices_optin_drop_pct", "label": "Opted-in devices drop", "group": "devices", "unit": "%", "default": 5, "hint": "Drop > X% vs canvas D-7 snapshot (per OS) -> alert" },
-    { "key": "devices_uninstall_rise_pct", "label": "Uninstalls rise", "group": "devices", "unit": "%", "default": 10, "hint": "Rise > X% vs canvas D-7 snapshot (per OS) -> alert" },
+    { "key": "optin_optout_ratio_drop_pct", "label": "Opt-in/opt-out ratio drop", "group": "app", "unit": "%", "default": 30, "hint": "Avg daily opt-in/opt-out ratio in the current window drops > X% vs the previous window AND the within-window trend is also declining (per OS) -> alert" },
 
     { "key": "push_sends_drop_pct", "label": "Push sends drop", "group": "push", "unit": "%", "default": 100, "hint": "Drop > X% (per OS) -> alert; 100 = only when sends go to zero" },
+    { "key": "push_pressure_per_user_max", "label": "Push pressure ceiling (msg/user/wk)", "group": "push", "unit": "", "default": 14, "hint": "Weekly push sends (iOS+Android) / opted-in devices > X -> over-messaging ceiling (informational; sensible default ~2/day)" },
     { "key": "optouts_rise_pct", "label": "Push opt-outs rise (raw)", "group": "push", "unit": "%", "default": 20, "hint": "Opt-out raw count rise > X% (per OS) -> magnitude pre-filter; alert only if the rate also rises (see below)" },
     { "key": "optout_rate_rise_pct", "label": "Push opt-out rate rise", "group": "push", "unit": "%", "default": 15, "hint": "Opt-out RATE per send (opt-outs / sends) must rise > X% WoW for the alert to fire. Volume-driven rises (rate flat/down) are suppressed" },
     { "key": "direct_response_rate_min", "label": "Click rate floor", "group": "push", "unit": "%", "default": 0.5, "hint": "Click rate (direct responses / sends) < X% in the current window -> alert (tracking-health)" },
     { "key": "direct_response_collapse_pct", "label": "Click rate collapse", "group": "push", "unit": "%", "default": 60, "hint": "WoW drop of the click rate >= X% -> likely tracking/SDK issue" },
 
-    { "key": "optins_drop_pct", "label": "Opt-ins drop", "group": "acquisition", "unit": "%", "default": 25, "hint": "New opt-ins drop > X% (per OS) -> alert" },
+    { "key": "total_devices_evolution_drop_pct", "label": "Total devices evolution decline", "group": "acquisition", "unit": "%", "default": 5, "hint": "Strong decline > X% in TOTAL unique devices between the two dated /api/reports/devices calls (window start -> end, per OS + total) -> alert" },
+    { "key": "devices_optin_drop_pct", "label": "Opted-in devices drop", "group": "acquisition", "unit": "%", "default": 5, "hint": "Opted-in devices drop > X% between the two dated devices calls (window start -> end, per OS) -> alert" },
+    { "key": "devices_uninstall_rise_pct", "label": "Uninstalls rise", "group": "acquisition", "unit": "%", "default": 10, "hint": "Uninstalled devices rise > X% between the two dated devices calls (window start -> end, per OS) -> alert" },
 
     { "key": "email_sends_drop_pct", "label": "Email sends drop", "group": "email", "unit": "%", "default": 100, "hint": "Drop > X% -> alert; 100 = only when sends go to zero" },
     { "key": "email_deliverability_min", "label": "Email deliverability floor", "group": "email", "unit": "%", "default": 95, "hint": "Delivery rate < X% -> alert (absolute)" },
@@ -70,7 +69,7 @@ window.AIRSHIP_KPI_THRESHOLDS = {
     { "key": "min_email_delivery_day", "label": "Min daily email deliveries", "group": "minvol", "unit": "", "default": 100, "hint": "Skip daily spam/delay check if that day's deliveries < X" },
     { "key": "min_email_campaign_sends", "label": "Min email campaign sends", "group": "minvol", "unit": "", "default": 5000, "hint": "Min sends to include a campaign in delay correlation" },
     { "key": "min_custom_event_count", "label": "Min custom event count", "group": "minvol", "unit": "", "default": 200, "hint": "Skip custom event threshold if prev count < X" },
-    { "key": "min_optins", "label": "Min opt-ins", "group": "minvol", "unit": "", "default": 100, "hint": "Per OS - skip opt-in thresholds if prev 7d opt-ins < X" },
+    { "key": "min_optin_optout_volume", "label": "Min opt-in/opt-out volume", "group": "minvol", "unit": "", "default": 100, "hint": "Per OS - skip the opt-in/opt-out ratio threshold if prev 7d opt-in + opt-out volume < X" },
     { "key": "min_timeinapp", "label": "Min time-in-app", "group": "minvol", "unit": "", "default": 1, "hint": "Skip time-in-app threshold if prev avg < X" },
     { "key": "min_sms_sends", "label": "Min SMS sends", "group": "minvol", "unit": "", "default": 100, "hint": "Skip SMS sends thresholds if prev 7d SMS sends < X" },
     { "key": "min_sms_dispatched", "label": "Min SMS dispatched", "group": "minvol", "unit": "", "default": 50, "hint": "Skip SMS delivery-rate threshold if prev 7d dispatched < X" },

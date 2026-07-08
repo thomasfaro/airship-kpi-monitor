@@ -34,10 +34,15 @@ set of Markdown files plus a client registry:
   list** (`#/`) where projects are **grouped by Slack channel** (clients sharing a
   channel appear in one collapsible card; the header shows combined client names +
   a clickable `#channel` link); each project row shows severity, badges, worst
-  headroom, micro-sparkline, "Open details →"; and a **deep project page**
-  (`#/project/<name>`) with per-channel KPI cards (current/previous, WoW delta,
-  iOS/Android split, mini-sparkline, headroom gauge, status chip), an alerts &
-  timeline section, and a **Thresholds & suggestions** panel (Apply/Edit/Reset).
+ headroom, micro-sparkline, "Open details →"; and a **deep project page**
+ (`#/project/<name>`) that centralizes **every monitored KPI on the project's
+ active channels (healthy ones included, not just problems)** as per-channel KPI
+ cards (current/previous, WoW delta, iOS/Android split, mini-sparkline history,
+ headroom gauge, status chip, a **one-line client-contextualized analysis**, and an
+ **inline editable alert threshold** under each card's gauge — Set/Reset plus an
+ Apply for any skill suggestion; KPIs under their min-volume floor show as `na`,
+ unused channels are hidden), an alerts & timeline section, and a fallback "Other
+ threshold suggestions" panel for suggestions with no KPI card that run.
   The **app** (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`,
   `thresholds-catalog.js`) is **committed and data-free**; the real data is
   `dashboard-data.js` (each run, Step 13), a **local + gitignored** file the skill

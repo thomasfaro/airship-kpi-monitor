@@ -115,18 +115,89 @@ def clients_list(doc):
     return lst if lst is not None else []
 
 
+def _project_name_aliases(name):
+    """Aliases for matching dashboard project names to clients.yml entries.
+
+    The skill often writes dashboard project names as ``{registry name} PROD``
+    while clients.yml may omit the suffix (e.g. ``Burger King FR`` vs
+    ``Burger King FR PROD``). Accept both forms when resolving a project.
+    """
+    n = (name or "").strip().lower()
+    aliases = {n}
+    if n.endswith(" prod"):
+        aliases.add(n[: -len(" prod")].rstrip())
+    else:
+        aliases.add(n + " prod")
+    return aliases
+
+
 def find_client(doc, name):
-    target = (name or "").strip().lower()
+    targets = _project_name_aliases(name)
     for c in clients_list(doc):
         cname = str(c.get("name", "")).strip().lower()
         bname = str(c.get("brand_name", "")).strip().lower()
-        if cname == target or (bname and bname == target):
-            return c
+        for target in targets:
+            if cname == target or (bname and bname == target):
+                return c
     return None
 
 
 def today():
     return datetime.date.today().isoformat()
+
+
+# --------------------------------------------------------------------------- #
+# Cache-busting: rewrite index.html on the fly so local same-dir css/js
+# references carry a ?v=<mtime> param. This means editing a committed app file
+# is picked up on the next reload with no manual version bump. index.html stays
+# clean on disk (no version params), so file:// still loads valid, unversioned
+# tags. External / CDN URLs and data: URIs are left untouched.
+# --------------------------------------------------------------------------- #
+# Matches src="..." / href="..." with single or double quotes.
+_ASSET_REF_RE = re.compile(r"""(?P<attr>\bsrc|\bhref)\s*=\s*(?P<q>["'])(?P<url>[^"']+)(?P=q)""")
+
+
+def _is_local_asset(url):
+    """True for a same-dir .css/.js reference we should version-stamp."""
+    if not url:
+        return False
+    lower = url.lower()
+    # Skip absolute URLs, protocol-relative, anchors, data URIs, or already-parametered.
+    if lower.startswith(("http://", "https://", "//", "data:", "#", "mailto:")):
+        return False
+    if url.startswith("/") or ".." in url or "?" in url:
+        return False
+    return lower.endswith(".css") or lower.endswith(".js")
+
+
+def _asset_version(url):
+    """Return an mtime-based version string for a local asset, or None."""
+    full = os.path.normpath(os.path.join(DASHBOARD_DIR, url))
+    if not (full == DASHBOARD_DIR or full.startswith(DASHBOARD_DIR + os.sep)):
+        return None
+    try:
+        return str(int(os.path.getmtime(full)))
+    except OSError:
+        return None
+
+
+def render_index_html():
+    """Read index.html and return it as bytes with ?v=<mtime> cache-busting
+    appended to local css/js references. Falls back to the raw file on error."""
+    index_path = os.path.join(DASHBOARD_DIR, "index.html")
+    with open(index_path, "r", encoding="utf-8") as fh:
+        html = fh.read()
+
+    def _sub(m):
+        url = m.group("url")
+        if not _is_local_asset(url):
+            return m.group(0)
+        ver = _asset_version(url)
+        if ver is None:
+            return m.group(0)
+        return "%s=%s%s?v=%s%s" % (m.group("attr"), m.group("q"), url, ver, m.group("q"))
+
+    return _ASSET_REF_RE.sub(_sub, html).encode("utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +252,16 @@ def build_state(doc):
         ct = {}
         for k, v in (c.get("custom_thresholds", {}) or {}).items():
             ct[str(k)] = v
+        dismissed = [str(k) for k in (c.get("dismissed_suggestions", []) or []) if k]
+        watched = []
+        for w in c.get("watched_alerts", []) or []:
+            watched.append(
+                {
+                    "key": str(w.get("key", "")),
+                    "reason": w.get("reason", ""),
+                    "since": str(w.get("since", "")) if w.get("since") else "",
+                }
+            )
         out_clients.append(
             {
                 "name": c.get("name", ""),
@@ -194,6 +275,8 @@ def build_state(doc):
                 "enabled": bool(c.get("enabled", True)),
                 "custom_thresholds": ct,
                 "muted_alerts": muted,
+                "dismissed_suggestions": dismissed,
+                "watched_alerts": watched,
             }
         )
     return {
@@ -345,6 +428,140 @@ def op_thresholds(payload):
         return build_state(doc)
 
 
+def op_dismiss_suggestion(payload):
+    """Record a dismissed threshold suggestion in `dismissed_suggestions: [key]`.
+
+    The skill reads this list and stops re-emitting the matching
+    `thresholdSuggestions[]` on the next run. Keys are validated against the
+    catalog (when available), deduped; an empty list is dropped.
+    """
+    project = payload.get("project")
+    key = (payload.get("key") or "").strip()
+    if not project or not key:
+        raise ApiError("project and key are required")
+    catalog = load_catalog_keys()
+    if catalog and key not in catalog:
+        raise ApiError("unknown threshold key: %s" % key)
+    with _LOCK:
+        y, doc = load_doc()
+        c = find_client(doc, project)
+        if c is None:
+            raise ApiError("project not found: %s" % project, 404)
+        lst = c.get("dismissed_suggestions")
+        if lst is None:
+            from ruamel.yaml.comments import CommentedSeq
+
+            lst = CommentedSeq()
+            c["dismissed_suggestions"] = lst
+        if key not in [str(k) for k in lst]:
+            lst.append(key)
+        save_doc(y, doc)
+        return build_state(doc)
+
+
+def op_undismiss_suggestion(payload):
+    """Remove a key from `dismissed_suggestions` (idempotent); drops the list
+    when it becomes empty."""
+    project = payload.get("project")
+    key = (payload.get("key") or "").strip()
+    if not project or not key:
+        raise ApiError("project and key are required")
+    with _LOCK:
+        y, doc = load_doc()
+        c = find_client(doc, project)
+        if c is None:
+            raise ApiError("project not found: %s" % project, 404)
+        lst = c.get("dismissed_suggestions")
+        if lst:
+            keep = [k for k in lst if str(k) != key]
+            if keep:
+                from ruamel.yaml.comments import CommentedSeq
+
+                seq = CommentedSeq()
+                for k in keep:
+                    seq.append(k)
+                c["dismissed_suggestions"] = seq
+            else:
+                del c["dismissed_suggestions"]
+        save_doc(y, doc)
+        return build_state(doc)
+
+
+def op_watch(payload):
+    """Manually watch a KPI: `watched_alerts: [{key, reason, since}]`.
+
+    Mirrors op_mute's round-trip structure. The skill surfaces watched KPIs in
+    the dashboard even when they are not breaching. Key is validated against the
+    catalog (when available). Updating an existing entry refreshes the reason.
+    """
+    project = payload.get("project")
+    key = (payload.get("key") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    if not project or not key:
+        raise ApiError("project and key are required")
+    catalog = load_catalog_keys()
+    if catalog and key not in catalog:
+        raise ApiError("unknown threshold key: %s" % key)
+    with _LOCK:
+        y, doc = load_doc()
+        c = find_client(doc, project)
+        if c is None:
+            raise ApiError("project not found: %s" % project, 404)
+        lst = c.get("watched_alerts")
+        if lst is None:
+            from ruamel.yaml.comments import CommentedSeq
+
+            lst = CommentedSeq()
+            c["watched_alerts"] = lst
+        existing = None
+        for item in lst:
+            if str(item.get("key", "")) == key:
+                existing = item
+                break
+        if existing is not None:
+            if reason:
+                existing["reason"] = reason
+        else:
+            lst.append(
+                _commented_map(
+                    [
+                        ("key", key),
+                        ("reason", reason or "Manual watch"),
+                        ("since", today()),
+                    ]
+                )
+            )
+        save_doc(y, doc)
+        return build_state(doc)
+
+
+def op_unwatch(payload):
+    """Stop watching a KPI (idempotent); drops the list when it becomes empty."""
+    project = payload.get("project")
+    key = (payload.get("key") or "").strip()
+    if not project or not key:
+        raise ApiError("project and key are required")
+    with _LOCK:
+        y, doc = load_doc()
+        c = find_client(doc, project)
+        if c is None:
+            raise ApiError("project not found: %s" % project, 404)
+        lst = c.get("watched_alerts")
+        if lst:
+            keep = [it for it in lst if str(it.get("key", "")) != key]
+            if keep:
+                from ruamel.yaml.comments import CommentedSeq
+
+                seq = CommentedSeq()
+                for it in keep:
+                    seq.append(it)
+                c["watched_alerts"] = seq
+            else:
+                del c["watched_alerts"]
+        save_doc(y, doc)
+        return build_state(doc)
+
+
 def _reject_secrets(payload):
     for k in payload.keys():
         if SECRET_RE.search(str(k)):
@@ -441,6 +658,10 @@ ROUTES = {
     "/api/mute": op_mute,
     "/api/unmute": op_unmute,
     "/api/thresholds": op_thresholds,
+    "/api/dismiss-suggestion": op_dismiss_suggestion,
+    "/api/undismiss-suggestion": op_undismiss_suggestion,
+    "/api/watch": op_watch,
+    "/api/unwatch": op_unwatch,
     "/api/client": op_client_upsert,
     "/api/client/delete": op_client_delete,
 }
@@ -500,6 +721,22 @@ class Handler(BaseHTTPRequestHandler):
         if not os.path.isfile(full):
             self._send_json({"ok": False, "error": "not found"}, 404)
             return
+        # index.html is rewritten on the fly to add ?v=<mtime> cache-busting to
+        # its local css/js references (see render_index_html). Fail-open: any
+        # error falls through to serving the raw file below.
+        if full == os.path.join(DASHBOARD_DIR, "index.html"):
+            try:
+                data = render_index_html()
+            except Exception:
+                data = None
+            if data is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
         ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
         if full.endswith(".js"):
             ctype = "application/javascript"

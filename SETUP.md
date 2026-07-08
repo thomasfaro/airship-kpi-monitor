@@ -233,10 +233,13 @@ the next client (if any).
   - **Served (recommended):** the `.cursor/hooks/start-dashboard.sh` hook
     auto-starts the server; open `http://127.0.0.1:8787` (or double-click
     `dashboard/serve.command`). Monitor is a **fleet list** that opens a **deep
-    project page** per project (per-channel KPI cards, headroom gauges, alerts
-    timeline, and a **Thresholds & suggestions** panel). There they can manage
-    routing (**Setup** tab), mute alerts, edit per-project thresholds, and **apply
-    skill-computed threshold suggestions** directly.
+    project page** per project (a centralized view of **every monitored KPI** on
+    the project's active channels — value, WoW evolution, history and a one-line
+    contextualized analysis — with headroom gauges and an **inline editable alert
+    threshold** per card, plus an alerts timeline). There
+    they can manage routing (**Setup** tab), mute alerts, edit per-project
+    thresholds inline on each KPI card, and **apply skill-computed threshold
+    suggestions** in place.
   - **Static:** `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`
     (read-only; actions copy prompts). It shows labelled sample data until a run
     writes the local `dashboard-data.js`.

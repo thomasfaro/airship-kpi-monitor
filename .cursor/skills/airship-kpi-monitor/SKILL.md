@@ -4,7 +4,7 @@ description: >-
   Daily Airship KPI monitoring with rolling 7-day window comparison, analysed
   per OS (iOS / Android). Detects significant variations in app opens, time in
   app, push sends/opt-outs, direct response rate (tracking-health signal),
-  opt-in velocity, email metrics (including daily spam complaint and delay
+  opt-in/opt-out ratio, email metrics (including daily spam complaint and delay
   rates), web push, SMS sends and delivery rate, and custom events. A
   multi-run confirmation gate + hysteresis + cadence-aware suppression removes
   false positives: a breach must persist across runs before it counts. Daily
@@ -248,6 +248,8 @@ operate in registry mode:
    | `region` (informational) | Airship region of the MCP server |
    | `custom_thresholds` | overrides of the Step 8 defaults |
    | `muted_alerts` (optional list) | false-positive alert keys to suppress (see **Muting false positives**) |
+   | `dismissed_suggestions` (optional list of threshold keys) | threshold-suggestion keys a TAM dismissed from the dashboard — the skill must **not** re-emit them in `thresholdSuggestions[]` (see Step 13 **Threshold suggestions**) |
+   | `watched_alerts` (optional list of `{key, reason, since}`) | KPIs a TAM manually watches from the dashboard — surfaced in the dashboard even without a breach (see Step 13 **Watched KPIs**) |
 
    The top-level `slack_workspace` / `slack_team_id` keys in `clients.yml`
    (if present) supply the `Slack workspace` / `Slack team ID` inputs used to
@@ -427,10 +429,12 @@ denominator used.**
 | App opens (per OS) | `/api/reports/opens` | raw count |
 | Push sends (per OS) | `/api/reports/sends` | raw count |
 | Push opt-outs (per OS) | `/api/reports/optouts` | rate = opt-outs / push sends |
-| Opt-ins (per OS) | `/api/reports/optins` | raw count; net = opt-ins − opt-outs |
+| Opt-in / opt-out ratio (per OS) | `/api/reports/optins` ÷ `/api/reports/optouts` | Daily opt-ins ÷ opt-outs (iOS/Android only — neither endpoint returns a web/SMS series). Both endpoints are still fetched exactly as before; they now feed this **App & engagement** ratio card instead of a standalone "Opt-in registrations" tile. Ratio > 1 = net-positive reach that day; < 1 = churn-dominant |
+| Push pressure per user per week (family `push_pressure_per_user`, Push section) | `/api/reports/sends` ÷ `/api/reports/devices?date=` | Weekly push sends (iOS+android) ÷ opted-in devices, unit `msg/user/wk`. Denominator is the **per-week opted-in base** via `/api/reports/devices?date=<week end>` (batched, Step 6); falls back to the current opted-in snapshot **labelled a proxy** when a week's dated call is unavailable. `series` is the multi-week evolution. Promotes the Step 7b marketing-pressure formula to a per-project dashboard family |
 | Click rate (direct responses, per OS) | `/api/reports/responses` | rate = direct / push sends (labelled "Click rate" in outputs) |
 | Time in app (per OS) | `/api/reports/timeinapp` | avg value/day returned by Airship |
-| Devices snapshot (per OS) | `/api/reports/devices` | unique / opted-in / opted-out / uninstalled |
+| Total devices evolution (family `total_devices_evolution`, Acquisition section, per OS + total) | `/api/reports/devices?date=<window start>` + `/api/reports/devices?date=<window end / today>` | `GET /api/reports/devices?date=<date-time>` counts **all device events that occurred before that date-time** and returns `total_unique_devices` + `counts.{ios,android,amazon,sms,web}.{unique_devices,opted_in,opted_out,uninstalled}` + `date_closed`/`date_computed`. Fetch it at **two dates** (window start & end) and diff: evolution = (end − start) ÷ start × 100 over the window, per OS + total. Alerts on a strong decline. **Merges** the former `installs` proxy and canvas-history-based `devices_unique` trend into one family — no canvas Devices-History dependency any more |
+| Opted-in / uninstalled devices — two-date evolution (per OS) | `/api/reports/devices?date=<start>` + `/api/reports/devices?date=<end>` | Same two dated calls: Δ% = change of `counts.{os}.opted_in` / `.uninstalled` between the window-start and window-end calls (opted-in drop / uninstalls rise alert). When only ONE dated call is available, emit the **current absolute value** per OS (status `ok`, note `Evolution n/a`), never a greyed-out `na` |
 | Email injection/delivery/open/click/bounce/unsubscribe | `/api/reports/events` | per-metric denominator (see Step 8) |
 | Email delay / spam complaint (daily pre-filter) | `/api/reports/events` | `delay` or `spam_complaint` / `delivery` per day (`precision=DAILY`, one call per day) |
 | Email delay hourly confirmation (candidate days) | `/api/reports/events`, `/api/reports/sends` | hourly `delay` / `delivery` per hour + `email` sends (`precision=HOURLY`, one events call per hour, 24 calls per candidate day) — confirms ≥ N consecutive hours above threshold before alerting |
@@ -518,6 +522,55 @@ run_weekly_insights =
 `full` runs it only when the gate opens. When `run_weekly_insights` is false,
 **skip Step 7b** and leave the existing insight sections untouched in Step 11.
 
+### Step 0b — Optimized fetch plan (batching, de-dup & channel gating)
+
+The steps below are written as a numbered narrative for clarity, but many of
+their MCP calls are **independent** and should be issued **in parallel** to cut
+wall-clock time. This is a pure execution optimization: **no precision is lost,
+no windowing/confirmation-gate/data-quality semantics change, and no step is
+reordered beyond batching independent calls**. Apply these three rules:
+
+1. **De-duplicate the 90d / 14d overlap — weekly runs only.** When
+   `run_weekly_insights` is true, the Step 7b 3-month history already fetches
+   `opens` / `sends` / `optins` / `optouts` over ~91 days `precision=DAILY`. On a
+   weekly run, **fetch each of these four series once over the 90-day range and
+   slice the 14-day window** ([`previous_window_start` … `current_window_end`])
+   out of the same rows for Step 1 — do **not** issue a second 14-day call for a
+   series already covered by the 90-day pull. On **daily / `alerts-only`** runs
+   (no Step 7b), keep the cheaper standalone 14-day Step 1 calls. `timeinapp`
+   (Step 5) is exempt — its 3-month pull is `MONTHLY`, so the 14-day `DAILY`
+   call stays separate.
+
+2. **Channel-activity gating — skip unused channels.** Before fetching, decide
+   which channels the project actually uses (device base or send volume in the
+   window / prior state): **explicitly skip the email fetches** (Step 2 event
+   sets, Step 3b per-day deliverability, Step 3b.5 hourly) when the project sends
+   no email; **skip the SMS fetches** (SMS delivery events) when SMS is inactive;
+   **skip the web-push fetches** when web is inactive. This mirrors the Step 13
+   "active channels only" coverage rule so no work is done for channels that emit
+   no cards or alerts.
+
+3. **Parallel MCP batching — batch independent GETs into parallel turns.**
+   - **Batch A (period metrics, Step 1):** `sends`, `opens`, `optins`, `optouts`
+     — one parallel turn (after the single cheap token-refresh probe of Step 1).
+   - **Batch B (independent single-shots):** the two dated `/api/reports/devices?date=`
+     calls (Step 6, window start & end), the per-week push-pressure
+     `devices?date=<week end>` calls (Change 2), `responses` (Step 4),
+     `timeinapp` (Step 5), and the two email event-set calls (Step 2) — all
+     independent of Batch A and of each other, so issue them **in parallel**.
+   - **Per-day loop (Step 3b):** issue the 7 per-day `events` calls **as one
+     parallel batch**, not sequentially — full DAILY precision is preserved (one
+     call per day, just concurrent).
+   - **Per-hour loop (Step 3b.5):** for each candidate day, issue its 24 hourly
+     `events` calls **as one parallel batch** — full HOURLY precision preserved.
+   - Keep **dependent** work ordered: hourly confirmation (Step 3b.5) still runs
+     only for the candidate days surfaced by the daily pre-filter (Step 3b); the
+     delay drill-down (Step 3c) still reuses Step 3b.5's breakdown; Step 8/8a
+     still consume the fully-fetched series.
+
+The canonical per-step definitions (params, windows, precision) below are
+unchanged — Step 0b only governs **how** their independent calls are grouped.
+
 ### Step 1 — Fetch period metrics (14 days DAILY in one call each)
 
 Call via MCP `call_airship_api` on the **Airship MCP server** specified in the
@@ -525,7 +578,11 @@ automation prompt. Every call here (and in all later steps) is subject to the
 **transient-error retry policy** in *Error handling* — retry `401 Expired
 token` / `40101`, `429`, and `5xx` with back-off before treating them as fatal.
 Make one cheap probe call first (a single-day `opens`) and let it refresh the
-token before issuing the full set of Step 1 calls.
+token before issuing the full set of Step 1 calls. Issue the four calls below as
+**one parallel batch** (Step 0b, Batch A). On a **weekly** run, do **not** issue
+these 14-day calls at all for `sends`/`opens`/`optins`/`optouts` — slice the
+14-day window out of the 90-day series already fetched for Step 7b (Step 0b
+rule 1).
 
 ```
 GET /api/reports/sends
@@ -792,17 +849,39 @@ If the endpoint rejects `precision=DAILY` or returns 401/403, log
 `"scope unavailable: /api/reports/timeinapp"` and skip time-in-app KPIs (do not
 alert on missing data).
 
-### Step 6 — Fetch devices snapshot
+### Step 6 — Fetch devices at two dates (window start & end)
+
+`GET /api/reports/devices` accepts a `date` param — **"all device events counted
+occurred before this date-time"** — so it is NOT snapshot-only. Fetch it at the
+**two window endpoints** and diff to get real growth/decline (no canvas-history
+mechanism needed):
 
 ```
-GET /api/reports/devices
-  (no date params — always returns current snapshot)
+GET /api/reports/devices?date=<current_window_start>   # window start (yesterday − 6 days, 00:00)
+GET /api/reports/devices?date=<current_window_end>      # window end (today / now)
 ```
 
-Extract per platform: `unique_devices`, `opted_in`, `opted_out`, `uninstalled`
-for `ios`, `android`, `web` (if `web.unique_devices > 0`), and `sms` (if
-`sms.unique_devices > 0`). These are used both for the canvas snapshot and
-for D-7 delta comparisons (Step 8).
+Batch these two calls in parallel (Step 6 of the optimized chronology, Step 8b of
+the ordering note). Each returns `total_unique_devices`, `date_closed` /
+`date_computed`, and `counts.{ios,android,amazon,web,sms}.{unique_devices,
+opted_in,opted_out,uninstalled}`. Extract for `ios`, `android`, `web` (if
+`web.unique_devices > 0`), and `sms` (if `sms.unique_devices > 0`).
+
+From the two dated results, Step 8 computes a two-date **evolution** (% growth/
+decline) per OS + total for `total_devices_evolution`, `devices_optin`, and
+`devices_uninstall` — the window **end** call also provides the current absolute
+base for the canvas snapshot / benchmark opt-in rate.
+
+**Graceful degrade:** if only ONE dated call succeeds (e.g. the window-start call
+is unavailable), emit the current absolute value per OS with status `ok` and a
+`note: "Evolution n/a"`; do **not** mark it `na` and do **not** trigger the
+decline/rise thresholds that run.
+
+**Per-week opted-in for push pressure (Change 2 / Step 7b):** the
+`push_pressure_per_user` family needs the opted-in base at each weekly bucket end.
+Batch one `GET /api/reports/devices?date=<week end>` per weekly bucket alongside
+the two window calls; fall back to the current opted-in snapshot (labelled a
+proxy) for any week whose dated call is unavailable.
 
 ### Step 7 — Read canvas for state (devices D-7 and open alerts)
 
@@ -816,7 +895,11 @@ Parse the canvas to extract:
 1. **Devices snapshot from 7 days ago** — look for a row tagged with date
    `current_window_start` (= yesterday - 6 days) in the Devices History table.
    Extract `ios.unique_devices`, `ios.opted_in`, `ios.uninstalled`,
-   `android.*`, `web.*`, `sms.*` (if present).
+   `android.*`, `web.*`, `sms.*` (if present). NOTE (Change 1): device **alert**
+   metrics no longer depend on this D-7 canvas row — they now come from the two
+   dated `/api/reports/devices?date=` calls (Step 6). This row is still read to
+   keep the canvas `## 📈 Devices history` table populated (display continuity),
+   but a missing D-7 row no longer blocks any device metric.
 2. **Currently open alerts** — list of alert keys already posted and not yet
    resolved (format: `ALERT_KEY | os | opened_date | last_seen_date | status`).
    Also read each row's **Status** (`Active` / `Muted`) and its reason. Any row
@@ -829,8 +912,11 @@ Parse the canvas to extract:
    delay %, spam complaints, spam %). Used to avoid duplicate rows when
    re-running the same day and to preserve history beyond the 7-day API window.
 
-If no row found for D-7, device delta metrics are **not computable** — mark
-them as `"n/a (canvas history pending)"` and do not trigger thresholds.
+A missing D-7 row no longer blocks device metrics: since Change 1 the device
+evolution comes from the two dated `/api/reports/devices?date=` calls (Step 6), so
+`total_devices_evolution` / `devices_optin` / `devices_uninstall` are computable
+independently of canvas history. The D-7 row is only used for the canvas display
+table and any non-device WoW figures that still reference it.
 
 ### Step 7b — Weekly insights (gated): 3-month history, benchmark, top campaigns, unicast
 
@@ -853,7 +939,12 @@ camp_end    = yesterday
 
 #### 7b.1 — Three-month KPI history (13 weekly + 3 monthly buckets)
 
-Re-fetch the Step 1 series over the wider window (one call each) plus time-in-app:
+Fetch the Step 1 series over the wider 90-day window (one call each) plus
+time-in-app. **De-dup (Step 0b rule 1):** on a weekly run these 90-day
+`opens`/`sends`/`optins`/`optouts` pulls are the **single source** for both the
+3-month history AND the Step 1 14-day window — slice the 14-day window out of
+these same rows rather than issuing separate Step 1 calls. Issue the four
+`DAILY` calls as one parallel batch:
 
 ```
 GET /api/reports/opens     start=hist_start end=window_end precision=DAILY
@@ -1203,10 +1294,14 @@ app_opens_cross_os_gap_pts: 50   # OR |iOS WoW − Android WoW| > 50 pts → ale
 # Engagement / time in app (PER OS)
 timeinapp_drop_pct: 20          # avg time-in-app drop > 20% → alert
 
-# Devices (vs canvas D-7 snapshot, PER OS)
-devices_unique_drop_pct: 5      # drop > 5% → alert
-devices_optin_drop_pct: 5       # drop > 5% → alert
-devices_uninstall_rise_pct: 10  # rise > 10% → alert
+# Acquisition — total devices evolution (per OS + total). Two-date growth/decline
+# from /api/reports/devices?date=<window start> vs ?date=<window end> (Step 6).
+# MERGES the former devices_unique_trend_drop_pct + installs proxy into one key.
+total_devices_evolution_drop_pct: 5  # decline > 5% in TOTAL unique devices across the window → alert
+
+# App engagement — opt-in / opt-out ratio (PER OS, iOS/Android only). Replaces
+# the old standalone "Opt-in registrations" tile/threshold (optins_drop_pct).
+optin_optout_ratio_drop_pct: 30  # avg ratio WoW drop > 30% AND within-window trend also declining → alert
 
 # Push mobile (evaluated PER OS: ios, android)
 push_sends_drop_pct: 100        # drop > 100% (i.e. zero sends) → alert
@@ -1216,8 +1311,15 @@ optout_rate_rise_pct: 15        # AND the opt-out RATE per send must rise ≥ 15
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 direct_response_collapse_pct: 60 # WoW drop of direct response RATE ≥ 60% on an OS → likely tracking/SDK issue
 
-# Acquisition / opt-ins (PER OS)
-optins_drop_pct: 25             # new opt-ins drop > 25% → alert
+# Push pressure per user per week (informational ceiling; family push_pressure_per_user)
+push_pressure_per_user_max: 14  # weekly push sends (iOS+Android) / opted-in devices > 14 → over-messaging ceiling (~2/day)
+
+# Acquisition / opt-ins — device base TWO-DATE evolution (per OS), from the two
+# dated /api/reports/devices?date= calls (Step 6), NOT a canvas D-7 snapshot. The
+# opt-in EVENTS signal (formerly optins_drop_pct) now lives above under App
+# engagement as the opt-in / opt-out ratio.
+devices_optin_drop_pct: 5       # opted-in devices drop > 5% across the window → alert
+devices_uninstall_rise_pct: 10  # uninstalled devices rise > 10% across the window → alert
 # net_optin_negative: alert if net (opt-ins − opt-outs) flips from ≥0 to <0
 
 # Email (channel-level, no OS split)
@@ -1250,7 +1352,7 @@ min_email_sends: 500            # skip email thresholds if prev 7d emails < 500
 min_email_delivery_day: 100     # skip daily spam/delay check if that day's deliveries < 100
 min_email_campaign_sends: 5000  # min sends to include a campaign in delay correlation
 min_custom_event_count: 200     # skip custom event threshold if prev count < 200
-min_optins: 100                 # per OS — skip opt-in thresholds if prev 7d opt-ins < 100
+min_optin_optout_volume: 100     # per OS — skip the opt-in/opt-out ratio threshold if prev 7d opt-in+opt-out volume < 100
 min_timeinapp: 1                # skip time-in-app threshold if prev avg < 1
 min_sms_sends: 100              # skip SMS sends thresholds if prev 7d SMS sends < 100
 min_sms_dispatched: 50          # skip SMS delivery rate threshold if prev 7d dispatched < 50
@@ -1306,13 +1408,48 @@ direct_response_rate_{os}_previous = direct_{os}_previous / push_sends_{os}_prev
 direct_rate_drop_pct_{os} = (previous_rate - current_rate) / previous_rate * 100
 # Source: /api/reports/responses (denominator = /api/reports/sends)
 
-# Opt-ins (acquisition velocity + net balance)
-optins_{os}_current   = sum(optins.{os}) over current window
-optins_{os}_previous  = sum(optins.{os}) over previous window
-optins_{os}_delta_pct = (current - previous) / previous * 100
+# Opt-in / opt-out ratio (per OS) — App & engagement card. Replaces the old
+# standalone "Opt-in registrations" tile; the underlying fetches are unchanged.
+# /api/reports/optins and /api/reports/optouts each return per-day iOS/Android
+# counts only (no web/SMS series). {os} ∈ {ios, android}.
+for each day d in the current window (and, separately, the previous window):
+  optin_optout_ratio_{os}_{d} = optins.{os}_{d} / optouts.{os}_{d}   if optouts.{os}_{d} > 0
+                               = OMIT d from the average/series        if optouts.{os}_{d} == 0
+  # Divide-by-zero guard: a zero-opt-out day has an undefined ratio, not an
+  # artificial spike — exclude it from the trend/average rather than capping it.
+optin_optout_ratio_{os}_current  = mean(optin_optout_ratio_{os}_d for d in current window,  d not omitted)
+optin_optout_ratio_{os}_previous = mean(optin_optout_ratio_{os}_d for d in previous window, d not omitted)
+optin_optout_ratio_{os}_delta_pct = (current - previous) / previous * 100
+# `series` for the dashboard = the daily ratio across the CURRENT window in date
+# order (the trend itself — this IS the chart, not a separate WoW-only figure).
+# Declining-trend guard (Step 8 alert key below) = the current window's LAST
+# non-omitted daily ratio < its FIRST non-omitted daily ratio (simple start→end
+# comparison, consistent with the unique-devices trend definition below).
+# Source: /api/reports/optins ÷ /api/reports/optouts
+
+# Net opt-in balance (unchanged, still computed for net_optin_negative — separate
+# from the ratio above; both read the same two endpoints)
+optins_{os}_current  = sum(optins.{os}) over current window
+optins_{os}_previous = sum(optins.{os}) over previous window
 net_optin_{os}_current  = optins_{os}_current  - push_optouts_{os}_current
 net_optin_{os}_previous = optins_{os}_previous - push_optouts_{os}_previous
 # Source: /api/reports/optins (net uses /api/reports/optouts)
+
+# Push pressure per user per week (family push_pressure_per_user, Push section).
+# Promotes the Step 7b marketing-pressure formula to a per-project dashboard
+# family with a MULTI-WEEK evolution series. Unit: msg/user/wk.
+for each weekly bucket w (most recent N weeks, e.g. 9):
+  push_sends_w      = sum(sends.ios + sends.android) over week w
+  optin_base_w      = counts.ios.opted_in + counts.android.opted_in
+                        from /api/reports/devices?date=<week w end>   # batched, Step 6
+                        FALLBACK: current opted-in snapshot (label a proxy) if that
+                        week's dated call is unavailable
+  push_pressure_per_user_w = push_sends_w / optin_base_w              # msg/user/wk
+push_pressure_per_user_current  = push_pressure_per_user_w[last]
+push_pressure_per_user_previous = push_pressure_per_user_w[last-1]
+# `series` for the dashboard = push_pressure_per_user_w in week order (the evolution).
+# Alert: push_pressure_per_user_current > push_pressure_per_user_max (informational ceiling).
+# Source: /api/reports/sends ÷ /api/reports/devices?date=<week end>
 
 # Time in app
 timeinapp_{os}_current   = avg daily value over current window
@@ -1397,14 +1534,45 @@ For each date d in [current_window_start, current_window_end]:
 # Skip day if delivery_{d} < min_email_delivery_day
 ```
 
-Devices deltas (only if D-7 canvas data available), per OS:
+Total devices evolution — TWO-DATE evolution (per OS + total), Acquisition card.
+`/api/reports/devices?date=<date-time>` counts all device events before that
+date-time, so the two window endpoints are read directly from the API (Step 6) —
+no canvas-history mechanism. This single family MERGES the former `installs` proxy
+and canvas-history `devices_unique` trend:
 
 ```
-devices_{os}_unique_delta_pct    = (today - d7) / d7 * 100
-devices_{os}_optin_delta_pct     = (today - d7) / d7 * 100
-devices_{os}_uninstall_delta_pct = (today - d7) / d7 * 100
-# Source: /api/reports/devices (today) vs canvas D-7 snapshot
+# From the two dated calls of Step 6 (start = ?date=<window start>, end = ?date=<window end/today>):
+total_devices_evolution_total_delta_pct = (end.total_unique_devices - start.total_unique_devices)
+                                            / start.total_unique_devices * 100
+for {os} ∈ {ios, android, web, sms}:
+  total_devices_evolution_{os}_delta_pct = (end.counts.{os}.unique_devices - start.counts.{os}.unique_devices)
+                                            / start.counts.{os}.unique_devices * 100
+# Alert: decline (delta_pct ≤ -total_devices_evolution_drop_pct) on total (or an OS).
+# GRACEFUL: if only ONE dated call succeeded, emit the current absolute base per OS
+# (status "ok", note "Evolution n/a"), NO deltaPct/threshold.breaching — the
+# dashboard shows its "History building…" placeholder, never a greyed-out "na".
+# Source: /api/reports/devices?date=<start> + /api/reports/devices?date=<end> (Step 6)
 ```
+
+Opted-in / uninstalled devices — SAME two-date evolution (per OS), Acquisition
+cards. No canvas D-7 dependency any more:
+
+```
+devices_{os}_optin_delta_pct     = (end.counts.{os}.opted_in    - start.counts.{os}.opted_in)    / start.counts.{os}.opted_in    * 100
+devices_{os}_uninstall_delta_pct = (end.counts.{os}.uninstalled - start.counts.{os}.uninstalled) / start.counts.{os}.uninstalled * 100
+# Alert: devices_optin_drop_pct (opted-in decline) / devices_uninstall_rise_pct (uninstalls rise).
+# Source: /api/reports/devices?date=<start> + /api/reports/devices?date=<end> (Step 6)
+```
+
+The per-OS **absolute snapshot** values (`devices_{os}_opted_in`,
+`devices_{os}_uninstalled`) are **always available** from the window-end call of
+Step 6 — the delta needs both dated calls. So a run with only one dated call
+**still emits each device KPI's current value** to the dashboard
+(Step 13): do **not** mark these `na` just because the delta is missing. Emit
+`status: "ok"`, the absolute `current` + per-OS `os.{os}.value`, omit `deltaPct`/
+`headroom`/`breaching`, and add `note: "Evolution n/a"`. Only use `na` when the
+snapshot itself is unavailable. The threshold (two-date evolution) is simply
+**not evaluated** for alerting when only one dated call is available.
 
 #### Assign an alert key to each threshold breach
 
@@ -1419,7 +1587,7 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `push_optouts_rise_{os}` | push_optouts_{os}_delta_pct ≥ optouts_rise_pct **AND** push_optout_rate_{os}_delta_pct ≥ optout_rate_rise_pct (raw-count rise correlated with a real per-send rate worsening; a volume-driven rise where the rate is flat/down is **suppressed**) |
 | `direct_response_low_{os}` | direct_response_rate_{os}_current < direct_response_rate_min |
 | `direct_response_collapse_{os}` | direct_rate_drop_pct_{os} ≥ direct_response_collapse_pct |
-| `optins_drop_{os}` | optins_{os}_delta_pct ≤ -optins_drop_pct |
+| `optin_optout_ratio_drop_{os}` | optin_optout_ratio_{os}_delta_pct ≤ -optin_optout_ratio_drop_pct **AND** the current window's ratio series is declining (last non-omitted daily ratio < first non-omitted daily ratio) — avoids firing on a single noisy day |
 | `net_optin_negative_{os}` | net_optin_{os}_previous ≥ 0 AND net_optin_{os}_current < 0 |
 | `email_sends_drop` | email_sends_delta_pct ≤ -email_sends_drop_pct |
 | `email_deliverability_low` | email_deliverability_current < email_deliverability_min |
@@ -1434,10 +1602,11 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `sms_sends_rise` | sms_sends_delta_pct ≥ sms_sends_rise_pct (if SMS active) |
 | `sms_delivery_rate_low` | sms_delivery_rate_current < sms_delivery_rate_min (if dispatched ≥ min_sms_dispatched) |
 | `sms_delivery_rate_drop` | sms_delivery_rate_drop_pts ≥ sms_delivery_rate_drop_pts threshold (same guard) |
-| `devices_{os}_unique_drop` | delta_pct ≤ -devices_unique_drop_pct |
-| `devices_{os}_optin_drop` | delta_pct ≤ -devices_optin_drop_pct |
-| `devices_{os}_uninstall_rise` | delta_pct ≥ devices_uninstall_rise_pct |
+| `total_devices_evolution_drop` (and `total_devices_evolution_drop_{os}`) | total_devices_evolution_total_delta_pct (or _{os}_delta_pct) ≤ -total_devices_evolution_drop_pct (two-date evolution from the two dated devices calls, not a D-7 snapshot) |
+| `devices_{os}_optin_drop` | devices_{os}_optin_delta_pct ≤ -devices_optin_drop_pct (two-date evolution) |
+| `devices_{os}_uninstall_rise` | devices_{os}_uninstall_delta_pct ≥ devices_uninstall_rise_pct (two-date evolution) |
 | `devices_web_optin_drop` | idem (if web active) |
+| `push_pressure_per_user_high` | push_pressure_per_user_current > push_pressure_per_user_max (informational over-messaging ceiling; never critical) |
 | `custom_event_new:{name}` | event in current, absent in previous |
 | `custom_event_vanished:{name}` | event in previous, count=0 in current |
 | `custom_event_rise:{name}` | count delta ≥ custom_event_rise_pct |
@@ -1624,7 +1793,7 @@ Check whether the alert is mechanically explained by another metric on the
 | `timeinapp_drop_{os}` | If app_opens_{os} also dropped → engagement-wide erosion on {os}; if opens stable → deeper in-session disengagement. Cite /api/reports/timeinapp. |
 | `direct_response_collapse_{os}` | **Prioritise tracking hypothesis**: `"Direct response rate on {os} collapsed from X% to Y% (direct / push sends, source /api/reports/responses) while sends stayed normal → most likely an attribution/SDK tracking issue on {os}, not a real engagement drop. Recommend checking SDK version / response tracking on {os}."` |
 | `push_optouts_rise_{os}` | This alert now fires ONLY when the per-send RATE also worsened (volume-driven rises are suppressed by the gate). Cause must state both: `"Opt-outs on {os} +X% WoW AND the opt-out RATE per send rose from Y% to Z% (+P% WoW) despite sends {+/-S}% → genuine engagement/deliverability concern, not volume-driven (source: /api/reports/optouts ÷ /api/reports/sends)."` |
-| `optins_drop_{os}` | If push_sends_{os} or app_opens_{os} also dropped → acquisition slowed alongside lower activity on {os}. Cite /api/reports/optins. |
+| `optin_optout_ratio_drop_{os}` | Opt-in/opt-out **ratio** (daily opt-ins ÷ opt-outs). Check whether the drop is driven by fewer opt-ins, more opt-outs, or both (compare both series). If push_sends_{os} or app_opens_{os} also dropped → lower opted-in-device activity on {os} alongside lower overall activity; if opens/sends are stable, suspect a registration/SDK/tracking regression or a churn event. Cite /api/reports/optins ÷ /api/reports/optouts. |
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
 | `email_spam_complaint_high` | High spam rate on one or more days — check whether the affected day(s)' campaigns had list-quality or consent issues. Cite spam_complaint / delivery per affected day from /api/reports/events (DAILY). Aggregate the affected days in the cause. |
@@ -2521,18 +2690,43 @@ file:
            // Per-KPI depth for the project detail page (Monitor → Open details).
            // One entry per evaluated metric; powers the KPI cards, headroom gauges
            // and mini-series. Optional but strongly recommended.
-           metrics: [ { key: "<metric/threshold key>", label: "<human label>",
-                          group: "app|devices|push|acquisition|email|web|sms|custom",
-                          channel: "app|push|email|web|sms|custom|devices",
-                          unit: "%|pts|count|min",
+           // CANONICAL NAMING (see "Metric family naming" below): `key` is the KPI
+           // FAMILY name (app_opens, timeinapp, optin_optout_ratio,
+           // push_sends, push_pressure_per_user, optouts, direct_response_rate,
+           // total_devices_evolution, devices_optin,
+           // devices_uninstall, email_sends, email_deliverability, email_open_rate,
+           // email_bounce, email_unsubscribe, email_spam_complaint_rate,
+           // email_delay_rate, web_sends, sms_sends, sms_delivery_rate, custom_event).
+           // ONE metric per family — NEVER bake the OS or direction into the key
+           // (no `optouts_ios`/`time_in_app`); the per-OS split lives in the `os`
+           // OBJECT below. `threshold.key` is the exact catalog key (thresholds-catalog.js).
+           metrics: [ { key: "<KPI family key — see the coverage map below>", label: "<human label>",
+                          group: "app|push|acquisition|email|web|sms|custom",
+                          channel: "app|push|email|web|sms|custom",
+                          unit: "%|pts|count|min|x",
                           current: <number>, previous: <number>,          // window totals/rates
-                          deltaPct: <n|omit>, deltaPts: <n|omit>,          // WoW change (pick the one that fits the metric)
-                          os: { ios: { deltaPct: <n> }, android: { deltaPct: <n> } } | null,  // omit/null when not per-OS
+                          deltaPct: <n|omit>, deltaPts: <n|omit>,          // WoW change (pick the one that fits the metric); omit both when not computable (e.g. device snapshot with no D-7, or a unique-devices trend with <2 stored snapshots)
+                          // Per-OS split — an OBJECT (NOT a scalar, NOT baked into `key`).
+                          // REQUIRED on every family that has per-OS data: app_opens,
+                          // timeinapp, optin_optout_ratio, push_sends,
+                          // optouts, direct_response_rate, total_devices_evolution,
+                          // devices_*. The card
+                          // renders the split ONLY from this object: it shows each OS's
+                          // `deltaPct` chip when present, else its absolute `value`. Use
+                          // `deltaPct` for WoW rate/volume KPIs (incl. rate KPIs like
+                          // direct_response_rate and optin_optout_ratio — per-OS deltaPct,
+                          // and the two-date device evolution families — per-OS deltaPct),
+                          // `value` for device snapshots with only one dated call.
+                          // Include `web` when that channel is active. Omit/null ONLY for
+                          // genuinely channel-wide metrics with no OS breakdown (e.g.
+                          // email/sms/web/custom).
+                          os: { ios: { deltaPct: <n> | value: <n> }, android: { … }, web: { … } } | null,
                           // For opt-outs (and any raw count with a correlated ratio): the per-send RATE.
                           // The opt-out alert fires only when BOTH the raw count and this rate rise;
                           // a volume-driven rise (rate flat/down) is suppressed (Step 8a). Omit if n/a.
                           rate: { current: <n>, previous: <n>, deltaPct: <n> } | { note: "<qualitative>" } | omit,
                           note: "<one-line caption, e.g. why a rise was suppressed>" | omit,
+                          analysis: "<one client-contextualized sentence: reads the value + WoW evolution, position vs benchmark when relevant, brief brand/activity context, and whether it is a concern>" | omit,
                           threshold: { key: "<threshold key>", value: <effective number>,
                                        kind: "drop|rise|floor|ceiling|gap",
                                        headroom: <number|omit>,            // distance to breach (see below); omit if not computable
@@ -2544,6 +2738,9 @@ file:
                           suggested: <number>, direction: "loosen|tighten",
                           basis: "volatility|false_positives|headroom",
                           rationale: "<one short sentence>", confidence: "low|med|high" }, … ],
+           // Manually-watched KPIs (clients.yml `watched_alerts`) — surfaced in the
+           // dashboard even without a breach. Echo the list verbatim (Watched KPIs below).
+           watchedAlerts: [ { key: "<threshold key>", reason: "<why>", since: "<YYYY-MM-DD>" }, … ],
            trend: <"string" | ["bullet", "bullet", …]>, alertHistory: [ <n>, … ] }  // newest last
        ] }
      ],
@@ -2570,30 +2767,158 @@ file:
      short `cause`. The dashboard shows these under a "Watching · not yet confirmed"
      sub-list with a `streak/needed` chip and a `🔎 N watching` badge. Candidates
      are **never** counted in `alerts.count` and **never** posted to Slack.
-   - **`metrics`** (optional but recommended): the per-KPI depth shown on the
-     **project detail page** (`Monitor → Open details →`). Emit **one entry per
-     metric you evaluated in Steps 1–8** (app opens, time in app, push sends,
-     opt-outs, direct response, opt-in velocity, devices, the email family, web
-     push, SMS, each custom event). For each: a human `label`; a `group`/`channel`
-     so the page can bucket cards by channel (App & engagement, Push,
-     Acquisition, Email, Web, SMS, Custom events, Devices); the `current` and
-     `previous` window values with the WoW change as `deltaPct` **or** `deltaPts`
-     (use points for rate metrics like open/delivery rate, percent for volumes);
-     an `os` split when the metric is per-OS (else `null`); a `threshold` block;
-     the confirmation `status` (`ok` / `candidate` / `confirmed` / `muted`, or
-     `na` when below the min-volume floor); and a bounded `series` (newest last,
-     ≤12 points) reused/extended from the previous `dashboard-data.js`.
+   - **`metrics`** (strongly recommended): the per-KPI depth shown on the
+     **project detail page** (`Monitor → Open details →`) — the centralized view of
+     **every monitored KPI**, its evolution and any problem. Emit **one entry per
+     monitored KPI on every channel the project actually uses — including the
+     healthy ones**, not only breaching KPIs (app opens, time in app, push sends,
+     opt-outs, click rate, opt-in velocity, devices, the email family, web push,
+     SMS, each custom event). Coverage rules:
+       - **Active channels only.** If a channel is not used by the project (e.g. no
+         SMS or no web push at all — zero base/sends across the window), **omit its
+         KPIs entirely** (the page hides empty channels). A channel counts as active
+         when it has any device base or send volume.
+       - **Healthy KPIs included.** A KPI with no alert still gets a card
+         (`status: "ok"`) so the page is a complete dashboard, not just a problem
+         list.
+       - **Below-min-volume → `na`.** When an active-channel KPI is skipped because
+         it is under its `min_*` floor, still emit it with `status: "na"` and a
+         short `note` (e.g. "below the minimum-volume floor — not evaluated") so it
+         is visible but clearly not assessed. Use `—`-friendly values (omit numbers
+         you cannot compute).
+       - **App & engagement — opt-in/opt-out ratio.** Emit the ratio KPI as **one
+         card, per OS** (family key `optin_optout_ratio`, label **"Opt-in / opt-out
+         ratio"**, `group: "app"`): `current`/`previous` = the window's **average
+         daily ratio** with `os: { ios: { deltaPct }, android: { deltaPct } }`
+         (iOS/Android only — neither `/api/reports/optins` nor `/api/reports/optouts`
+         has a web/SMS series). `series` is the **daily ratio across the current
+         window** (the trend itself, not a separate WoW-only figure) — omit any day
+         whose opt-out count was 0 (undefined ratio) rather than inventing a spike.
+         `unit: "x"`. Its `analysis` must interpret whether the ratio is above/below
+         1 and its direction (> 1 = net-positive reach; < 1 = churn-dominant). This
+         replaces the old standalone "Opt-in registrations" tile/family (`optins`) —
+         the underlying `/api/reports/optins` / `/api/reports/optouts` fetches are
+         unchanged, only their KPI-card usage moved.
+       - **Push — push pressure per user per week.** Emit a `push_pressure_per_user`
+         card (label **"Push pressure / user / wk"**, `group: "push"`, `unit: "x"`):
+         `current`/`previous` = the latest / prior weekly value (weekly push sends
+         iOS+Android ÷ opted-in devices), `threshold.key: "push_pressure_per_user_max"`
+         (ceiling, informational), and `series` = the **multi-week** evolution (one
+         point per ISO week). Denominator is the per-week opted-in base via
+         `/api/reports/devices?date=<week end>` (Step 6); when a week's dated call is
+         unavailable, fall back to the current opted-in snapshot and add a
+         `note` labelling it a proxy. Omit the card only when push is not an active
+         channel.
+       - **Acquisition & opt-ins — total devices evolution (merged).** Emit ONE
+         `total_devices_evolution` card (label **"Total devices evolution"**,
+         `group: "acquisition"`, `unit: "%"`) that **merges** the former `installs`
+         proxy and `devices_unique` trend: `current`/`previous` = the window
+         end/start TOTAL unique-device counts, `deltaPct` = the two-date evolution %,
+         `os: { ios: { deltaPct }, android: { deltaPct } }` (+`web`/`sms` when active),
+         `threshold.key: "total_devices_evolution_drop_pct"`, and `series` = the
+         window's stored daily snapshots (display only). Computed from the two dated
+         `/api/reports/devices?date=` calls (Step 6) — no canvas-history dependency.
+         When only ONE dated call is available, **omit**
+         `deltaPct`/`threshold.headroom`/`threshold.breaching`, keep `status: "ok"`
+         with the current absolute base and `note: "Evolution n/a"` — the dashboard's
+         `series.length < 2` "History building…" placeholder covers a short series.
+       - **Acquisition & opt-ins — opted-in / uninstalled degrade gracefully.** For
+         `devices_optin`, `devices_uninstall` (`group: "acquisition"`, `unit: "%"`):
+         emit the two-date evolution `deltaPct` per OS (`os: { ios: { deltaPct }, … }`)
+         from the same two dated calls. **Always emit the current absolute snapshot**
+         (total in `current`, per-OS in `os.{os}.value`, include `web` when active)
+         with `status: "ok"` when at least the window-end call is present. When only
+         one dated call is available, **omit** `deltaPct`/`threshold.headroom`/
+         `threshold.breaching`, keep `threshold.key`, and add `note: "Evolution n/a"`.
+         Do **not** emit these as fully `na` — a greyed card with no value is the
+         reported bug.
+     - **Metric family naming (canonical — no exceptions).** `metrics[].key` is the
+       KPI **family** name, identical to the `KPI_META` key in `app.js` and resolving
+       to the catalog thresholds. Emit **exactly one metric per family**; carry the OS
+       breakdown in the `os` OBJECT, **never** in the key. Do **not** emit
+       `optouts_ios`/`optouts_android`, `time_in_app`, `custom_events`,
+       `email_bounce_rate`, `web_push_sends`, `email_spam_rate`, or any OS/direction
+       suffix — the correct families are:
+       `app_opens`, `timeinapp`, `optin_optout_ratio`, `push_sends`,
+       `push_pressure_per_user`, `optouts`, `direct_response_rate`,
+       `total_devices_evolution`, `devices_optin`,
+       `devices_uninstall`, `email_sends`, `email_deliverability`, `email_open_rate`,
+       `email_bounce`, `email_unsubscribe`, `email_spam_complaint_rate`,
+       `email_delay_rate`, `web_sends`, `sms_sends`, `sms_delivery_rate`,
+       `custom_event`. Each metric's `threshold.key` is the exact key from
+       `dashboard/thresholds-catalog.js` (e.g. family `timeinapp` → `timeinapp_drop_pct`;
+       `optouts` → `optout_rate_rise_pct`; `push_pressure_per_user` → `push_pressure_per_user_max`;
+       `total_devices_evolution` → `total_devices_evolution_drop_pct`;
+       `optin_optout_ratio` → `optin_optout_ratio_drop_pct`; `email_bounce` →
+       `email_bounce_max`; `email_spam_complaint_rate` → `email_spam_complaint_rate_max`;
+       `custom_event` → `custom_event_drop_pct`).
+     - **Coverage map (catalog group → families → section).** For **every actively-used
+       channel**, emit **all** its families (healthy = `status:"ok"`, below the
+       `min_*` floor = `status:"na"`), each with an `os` object where noted:
+       | Section (`group`) | Families to emit (per active channel) | Per-OS `os` object? |
+       |---|---|---|
+       | `app` | `app_opens`, `timeinapp`, `optin_optout_ratio` | yes (iOS/Android) |
+       | `push` | `push_sends`, `push_pressure_per_user`, `optouts`, `direct_response_rate` | **yes for sends/opt-outs/click rate;** `push_pressure_per_user` is a per-project weekly figure (no OS object) |
+       | `acquisition` | `total_devices_evolution`, `devices_optin`, `devices_uninstall` | yes (per-OS `deltaPct` from the two dated calls; `value` when only one dated call; +`web`/`sms` when active) |
+       | `email` | `email_sends`, `email_deliverability`, `email_open_rate`, `email_bounce`, `email_unsubscribe`, `email_spam_complaint_rate`, `email_delay_rate` | no (channel-wide) |
+       | `web` | `web_sends` | no |
+       | `sms` | `sms_sends`, `sms_delivery_rate` | no |
+       | `custom` | `custom_event` (one per tracked event, sharing the family) | no |
+       (There is no longer a `devices` group — it was reventilated: the merged
+       `total_devices_evolution` and `devices_optin`/`devices_uninstall` all sit in
+       `acquisition`; the former `installs` and `devices_unique` families are gone.)
+       Min-volume gates map per family: `min_push_sends`→push; `min_optin_optout_volume`→
+       `optin_optout_ratio`; `min_timeinapp`→timeinapp; `min_email_sends`→email family
+       (`min_email_delivery_day` gates spam/delay); `min_custom_event_count`→custom_event;
+       `min_sms_sends`→sms_sends, `min_sms_dispatched`→sms_delivery_rate;
+       `min_web_sends`→web_sends. `total_devices_evolution`/`devices_optin`/
+       `devices_uninstall`/`push_pressure_per_user` have no min-volume gate (device
+       snapshots are never volume-gated; push pressure is informational).
+     For each entry: a human `label`; a `group`/`channel` so the page can bucket
+     cards by channel (App & engagement, Push, Acquisition & opt-ins, Email, Web
+     push, SMS, Custom events); the `current` and `previous` window values
+     with the WoW change as `deltaPct` **or** `deltaPts` (points for rate metrics
+     like open/delivery rate, percent for volumes); an `os` split when per-OS (else
+     `null`); a `threshold` block; the confirmation `status` (`ok` / `candidate` /
+     `confirmed` / `muted` / `na`); and — **always, for every KPI** — a bounded
+     `series` (newest last, ≤12 points) reused/extended from the previous
+     `dashboard-data.js` (seed a longer series from the 3-month history on a weekly
+     run). The `series` powers the per-card history chart, so write it for healthy
+     KPIs too, not only breaching ones.
      **`threshold.headroom`** is the signed distance to the breach in the metric's
      own unit — **positive = safe margin, negative = breaching** (e.g. a drop
      threshold at −100% with an actual −17.9% has headroom `82.1`; a floor metric
      3 pts above its floor has headroom `3`). The detail page draws a gauge from
      it, so keep the sign convention consistent. Omit `metrics` entirely on old
      snapshots — the page degrades to the summary it already shows.
+   - **`metrics[].analysis`** (recommended): **one client-contextualized sentence
+     per KPI**, in English, shown on the card under the values. It should read the
+     current value and its WoW evolution, position it **vs the market/internal
+     benchmark when relevant** (reuse Step 7b.2 bands for push/app KPIs), add a
+     brief best-effort **brand/activity context**, and state **whether it is a
+     concern** or healthy. Keep it to a single, scannable sentence — never a
+     paragraph, never fabricated numbers.
+     - **Cadence (cost control).** Author `analysis` with the model **only when
+       `run_weekly_insights` is true** (the weekly gate, Step 0/7b). On the lighter
+       daily runs, **reuse** each KPI's previous `analysis` from the existing
+       `dashboard-data.js` (same read-merge-write pattern as `series`/`history`),
+       refreshing only a KPI whose status changed materially (e.g. crossed into
+       `candidate`/`confirmed` or resolved).
+     - **Deterministic fallback.** If no prior `analysis` exists and it is not a
+       weekly run, emit a short factual sentence built from the numbers you already
+       have (direction + magnitude of the WoW change, and the headroom / breach
+       state) so every card still carries a one-line read. The dashboard also has
+       its own client-side fallback, so `analysis` may be omitted safely.
    - **`thresholdSuggestions`** (optional): skill-computed tuning hints for the
-     project's thresholds, rendered on the detail page next to each effective
-     value with **Apply / Edit / Reset** (served mode POSTs `/api/thresholds`;
-     `file://` copies a prompt). See **Threshold suggestions** below for how to
-     derive `suggested`, `direction`, `basis`, `rationale`, and `confidence`.
+     project's thresholds. On the detail page each KPI card shows its alert
+     threshold **inline** (an editable value under the headroom gauge, next to the
+     live result and its trend chart) with **Set / Reset**, and — when a suggestion
+     exists for that threshold — an inline **Apply** with the suggested value,
+     direction, confidence and rationale. A suggestion whose threshold has no KPI
+     card this run falls back to a small "Other threshold suggestions" panel. All
+     edits write the same way (served mode POSTs `/api/thresholds`; `file://` copies
+     a prompt). See **Threshold suggestions** below for how to derive `suggested`,
+     `direction`, `basis`, `rationale`, and `confidence`.
    - **`resolvedRecently`** (optional, top-level): alerts that cleared the resolve
      hysteresis recently — `key`, `project`, `resolvedAt`, short `cause`. Rendered
      as a "✅ Recently resolved" log so recoveries stay visible without a Slack post.
@@ -2662,6 +2987,35 @@ project's `custom_thresholds` override), the `suggested` value, `direction`
 `custom_thresholds[key]` in `clients.yml` — the same field the detail page's
 Apply/Edit and the served `/api/thresholds` endpoint already manage. No new
 config or `serve.py` change is required.
+
+**Dismissed suggestions (honour `dismissed_suggestions`).** Before emitting
+`thresholdSuggestions[]`, read the project's `clients.yml` `dismissed_suggestions`
+list (threshold keys a TAM dismissed from the dashboard — via the served
+`/api/dismiss-suggestion` endpoint or the `file://` copy-prompt) and **drop any
+suggestion whose `key` is in that list**. Do **not** re-emit a dismissed
+suggestion on subsequent runs; a TAM re-surfaces it explicitly (un-dismiss via
+`/api/undismiss-suggestion`). This keeps the suggestions panel free of hints the
+TAM already judged and rejected. The dashboard also filters the dismissed set
+client-side (belt-and-braces), but the skill should not write them in the first
+place.
+
+#### Watched KPIs (honour `watched_alerts`)
+
+A TAM can **manually watch** any KPI from the dashboard — even one that is not
+breaching — capturing a short reason (served: `/api/watch`; `file://`:
+copy-prompt). This writes `watched_alerts: [{key, reason, since}]` in
+`clients.yml`. On each run the skill must:
+
+- read the project's `watched_alerts`, and
+- **echo them into `dashboard-data.js`** as a top-level-per-project
+  `watchedAlerts: [{key, reason, since}]` array so the dashboard keeps surfacing
+  each watched KPI (a "👁 Watching" chip on its tile and a **Watched KPIs · manual**
+  block in the project timeline) **regardless of breach state**.
+
+Watching is purely a visibility aid — it does **not** change thresholds, the
+confirmation gate, or what is posted to Slack. A watched KPI that also breaches is
+still evaluated and alerted normally. Un-watching (`/api/unwatch`) removes the
+entry. Fail-open: if `watched_alerts` is absent, emit no `watchedAlerts` array.
 
 ## Output
 
