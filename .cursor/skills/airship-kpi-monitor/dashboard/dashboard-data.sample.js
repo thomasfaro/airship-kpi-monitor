@@ -252,7 +252,7 @@ window.AIRSHIP_KPI_DATA = {
               // between two dated /api/reports/devices calls (window start → end),
               // per OS + total. Merges the former installs proxy + unique-devices
               // trend into one Acquisition tile.
-              key: "total_devices_evolution", label: "Total devices evolution", group: "acquisition", channel: "acquisition", unit: "%",
+              key: "total_devices_evolution", label: "Total devices evolution", group: "acquisition", channel: "acquisition", unit: "count",
               current: 1204000, previous: 1191000, deltaPct: 1.1,
               os: { ios: { deltaPct: 0.8 }, android: { deltaPct: 1.4 } },
               threshold: { key: "total_devices_evolution_drop_pct", value: 5, kind: "drop", headroom: 6.1, breaching: false },
@@ -266,7 +266,7 @@ window.AIRSHIP_KPI_DATA = {
             },
             {
               // Opted-in devices — two-date evolution (window start → end), per OS.
-              key: "devices_optin", label: "Opted-in devices", group: "acquisition", channel: "acquisition", unit: "%",
+              key: "devices_optin", label: "Opted-in devices", group: "acquisition", channel: "acquisition", unit: "count",
               current: 512000, previous: 515000, deltaPct: -0.6,
               os: { ios: { deltaPct: -0.4 }, android: { deltaPct: -0.8 } },
               threshold: { key: "devices_optin_drop_pct", value: 5, kind: "drop", headroom: 4.4, breaching: false },
@@ -279,7 +279,7 @@ window.AIRSHIP_KPI_DATA = {
             },
             {
               // Uninstalled devices — two-date evolution (window start → end), per OS.
-              key: "devices_uninstall", label: "Uninstalled devices", group: "acquisition", channel: "acquisition", unit: "%",
+              key: "devices_uninstall", label: "Uninstalled devices", group: "acquisition", channel: "acquisition", unit: "count",
               current: 96000, previous: 92000, deltaPct: 4.3,
               os: { ios: { deltaPct: 3.1 }, android: { deltaPct: 5.2 } },
               threshold: { key: "devices_uninstall_rise_pct", value: 10, kind: "rise", headroom: 5.7, breaching: false },
@@ -498,7 +498,7 @@ window.AIRSHIP_KPI_DATA = {
               // dated call couldn't be fetched), so the evolution % isn't computable
               // yet. Show the current absolute base per OS with status "ok" (NOT
               // "na"); omit deltaPct/headroom/breaching and add a note.
-              key: "total_devices_evolution", label: "Total devices evolution", group: "acquisition", channel: "acquisition", unit: "%",
+              key: "total_devices_evolution", label: "Total devices evolution", group: "acquisition", channel: "acquisition", unit: "count",
               current: 892000,
               os: { ios: { value: 402000 }, android: { value: 490000 } },
               threshold: { key: "total_devices_evolution_drop_pct", value: 5, kind: "drop" },
@@ -510,7 +510,7 @@ window.AIRSHIP_KPI_DATA = {
               // Graceful device snapshot: the window-start dated devices call was not
               // available → show the current absolute base per OS (status "ok"), NOT
               // a greyed-out "na" card.
-              key: "devices_optin", label: "Opted-in devices", group: "acquisition", channel: "acquisition", unit: "%",
+              key: "devices_optin", label: "Opted-in devices", group: "acquisition", channel: "acquisition", unit: "count",
               current: 486000,
               os: { ios: { value: 214000 }, android: { value: 272000 } },
               threshold: { key: "devices_optin_drop_pct", value: 5, kind: "drop" },

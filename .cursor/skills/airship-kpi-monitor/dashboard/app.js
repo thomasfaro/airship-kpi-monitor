@@ -410,6 +410,22 @@
             if (muted) { if (reason) a.reason = reason; } else { delete a.reason; }
           }
         });
+        // Keep the KPI tile's own status in sync: the card grey/active state is
+        // driven by metricStatus(m) → m.status, NOT by alertsList. Without this,
+        // an unmuted tile stays greyed (and a muted one never greys).
+        (p.metrics || []).forEach(function (m) {
+          var owns = alertsForMetric(p, m).some(function (a) {
+            return a.key === key || (a.key && a.key.split(":")[0] === key);
+          });
+          if (!owns) return;
+          if (muted) {
+            m.status = "muted";
+          } else {
+            var stillAlerting = alertsForMetric(p, m).some(function (a) { return !a.muted; });
+            m.status = stillAlerting ? "confirmed"
+              : (m.threshold && m.threshold.breaching ? "confirmed" : "ok");
+          }
+        });
       });
     });
   }

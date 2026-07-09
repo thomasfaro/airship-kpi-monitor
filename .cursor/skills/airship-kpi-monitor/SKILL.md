@@ -21,7 +21,8 @@ description: >-
   (push → vertical direct-open band, message center → vertical read-rate band, email
   → the client's own internal baseline).
   Uses the Airship Reports API via MCP and the Slack MCP plugin. Triggered from
-  Cursor chat (one-off or /loop recurring).
+  Cursor chat as a one-off, or as a recurring daily loop via "run kpi daily" /
+  "start the daily loop" / "lance le monitoring quotidien" (or /loop directly).
 model: claude-sonnet
 # Always use the latest available Claude Sonnet version in the Cursor
 # Automations editor — do not pin a specific version number (e.g. 4-5, 4-6).
@@ -213,6 +214,43 @@ Detect the scope from the prompt; default to `full`.
 **`alerts-only`** is the symmetrical light run: identical to `full` except Step 7b
 is skipped, so daily runs stay fast. `full` (default) does everything, with the
 heavy sections naturally rate-limited by the weekly gate inside Step 7b.
+
+### Daily loop shortcut
+
+When the prompt is a bare **"run kpi daily"**, **"start the daily loop"**,
+**"lance le monitoring quotidien"**, or similar (i.e. the user wants the recurring
+job, not a single run), arm a 24h loop instead of running once. Use the `loop`
+skill's fixed-schedule pattern:
+
+1. First check existing terminals for an already-running
+   `AGENT_LOOP_TICK_KPI_DAILY` loop; if present, report its PID and do not start a
+   second one.
+2. Arm one background shell loop (title `Loop every 24h: KPI daily monitoring`),
+   monitoring output on `^AGENT_LOOP_TICK_KPI_DAILY`:
+
+```bash
+while true; do
+  sleep 86400
+  echo 'AGENT_LOOP_TICK_KPI_DAILY {"prompt":"Run airship-kpi-monitor for all clients in clients.yml, scope alerts-only, no Slack posts, regenerate the local dashboard (Step 13)."}'
+done
+```
+
+3. Run the monitoring workflow **once immediately** in `alerts-only` scope for all
+   clients (do not wait for the first tick).
+4. On each tick, re-run the same `alerts-only` all-clients workflow and give a
+   short summary of what changed. To stop, kill the loop PID and do not re-arm.
+
+This is just a convenience wrapper around the `alerts-only` multi-client run below
+plus the `loop` skill — no separate skill needed.
+
+> **Dashboard data must stay complete on every tick.** `alerts-only` is a *Slack*
+> throttle, **not** a dashboard throttle: each tick's Step 13 rewrite of
+> `dashboard-data.js` MUST still emit the **full** per-project shape — `channel`,
+> `canvasId`, `lastRun`, `industry`, and **one `metrics[]` entry per monitored KPI
+> family on every active channel** (healthy KPIs included, `na` below min-volume),
+> not only the breaching metrics. Dropping `channel` un-groups the fleet home;
+> dropping healthy metrics empties the project detail pages. Never emit an
+> alerts-only subset.
 
 ### Manual multi-client run — procedure
 
@@ -2811,7 +2849,9 @@ file:
          channel.
        - **Acquisition & opt-ins — total devices evolution (merged).** Emit ONE
          `total_devices_evolution` card (label **"Total devices evolution"**,
-         `group: "acquisition"`, `unit: "%"`) that **merges** the former `installs`
+         `group: "acquisition"`, `unit: "count"` — the headline is the absolute
+         device **volume**; the evolution is carried by `deltaPct`, never as the
+         headline unit) that **merges** the former `installs`
          proxy and `devices_unique` trend: `current`/`previous` = the window
          end/start TOTAL unique-device counts, `deltaPct` = the two-date evolution %,
          `os: { ios: { deltaPct }, android: { deltaPct } }` (+`web`/`sms` when active),
@@ -2823,7 +2863,9 @@ file:
          with the current absolute base and `note: "Evolution n/a"` — the dashboard's
          `series.length < 2` "History building…" placeholder covers a short series.
        - **Acquisition & opt-ins — opted-in / uninstalled degrade gracefully.** For
-         `devices_optin`, `devices_uninstall` (`group: "acquisition"`, `unit: "%"`):
+         `devices_optin`, `devices_uninstall` (`group: "acquisition"`,
+         `unit: "count"` — headline is the absolute device **volume**, evolution via
+         `deltaPct`, not the headline unit):
          emit the two-date evolution `deltaPct` per OS (`os: { ios: { deltaPct }, … }`)
          from the same two dated calls. **Always emit the current absolute snapshot**
          (total in `current`, per-OS in `os.{os}.value`, include `web` when active)
