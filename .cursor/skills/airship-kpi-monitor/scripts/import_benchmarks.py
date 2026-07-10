@@ -4,7 +4,7 @@
 Usage:
     python scripts/import_benchmarks.py <benchmarks.xlsx> [quarter_label]
 
-The Airship "UA Benchmarks" workbook ships these sheets (Q1 2026 layout):
+The Airship "UA Benchmarks" workbook ships these sheets (layout stable Q1–Q2 2026):
   - Push Opt-in Rate            : Quarter | DeviceFamily | Vertical | p10 | p50 | p90
   - Engagement Direct & Infl Opens : Quarter | DeviceFamily | Vertical | dir p10/p50/p90 | infl p10/p50/p90
   - Push Sends Per User- Month  : Quarter | DeviceFamily | Vertical | p10 | p50 | p90

@@ -1,6 +1,6 @@
 # Industry benchmarks (engagement review)
 
-Source: **Airship User Engagement (UA) Benchmarks** · file `Q1_2026_UA_Benchmarks_04.02.2026.xlsx` · published **2026-Q1** · region **global** · imported 2026-06-23.
+Source: **Airship User Engagement (UA) Benchmarks** · file `Q2_2026_UA_Benchmarks_07.09.2026.xlsx` · published **2026-Q2** · region **global** · imported 2026-07-10.
 
 Machine-readable copy: `benchmarks.json` (scripts read that). Regenerate with
 `python scripts/import_benchmarks.py <file.xlsx>` when a new quarter arrives.
@@ -34,142 +34,142 @@ _aliases: all, overall, cross-industry, baseline, global_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 49.4% [29.6–73.5] | 50.7% [25.6–73.5] | — |
-| Direct open rate | 2.6% [0.7–6.7] | 3.2% [0.8–9.8] | 0.4% [0.0–1.3] |
-| Influenced open rate | 13.1% [3.5–67.7] | 19.6% [4.0–72.2] | — |
-| Sends/user/month | 8.9 [0.7–205.6] | 5.1 [0.5–187.9] | — |
-| Msg Center read rate | — | — | 14.5% [0.3–38.9] |
+| Opt-in rate | 49.4% [29.5–73.5] | 50.3% [25.3–73.9] | — |
+| Direct open rate | 2.5% [0.6–6.8] | 3.1% [0.8–9.8] | 0.4% [0.0–1.3] |
+| Influenced open rate | 14.1% [3.3–69.9] | 19.9% [3.8–75.6] | — |
+| Sends/user/month | 7.7 [0.7–214.0] | 4.6 [0.5–192.1] | — |
+| Msg Center read rate | — | — | 14.8% [0.3–41.3] |
 
 ### Business  (`business`)
 _aliases: b2b, professional, enterprise, saas_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 55.0% [33.5–79.1] | 54.8% [25.5–80.5] | — |
-| Direct open rate | 3.4% [0.6–10.7] | 4.2% [1.0–14.4] | 0.4% [0.0–0.9] |
-| Influenced open rate | 18.5% [4.5–115.1] | 28.7% [6.7–133.8] | — |
-| Sends/user/month | 6.8 [0.5–108.9] | 5.4 [0.4–40.8] | — |
-| Msg Center read rate | — | — | 3.7% [0.6–29.6] |
+| Opt-in rate | 56.2% [34.1–79.2] | 54.9% [25.9–79.2] | — |
+| Direct open rate | 3.0% [0.4–10.5] | 4.2% [0.8–13.3] | 0.4% [0.0–1.1] |
+| Influenced open rate | 20.0% [3.7–136.8] | 29.1% [7.2–165.5] | — |
+| Sends/user/month | 7.3 [0.5–100.4] | 4.7 [0.4–51.5] | — |
+| Msg Center read rate | — | — | 3.9% [0.5–21.4] |
 
 ### Charities, Foundations, and Non-Profit  (`charities_foundations_and_non_profit`)
 _aliases: non-profit, nonprofit, charity, foundation, ngo_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 54.0% [34.8–68.7] | 54.5% [46.0–62.9] | — |
-| Direct open rate | 11.4% [3.0–19.8] | 4.4% [4.4–4.4] | — |
-| Influenced open rate | 21.6% [9.3–33.9] | 17.0% [17.0–17.0] | — |
-| Sends/user/month | 3.0 [0.9–5.1] | 2.8 [2.8–2.8] | — |
-| Msg Center read rate | — | — | 10.6% [5.4–15.8] |
+| Opt-in rate | 53.7% [31.6–61.0] | 57.1% [44.5–62.9] | — |
+| Direct open rate | 8.6% [3.0–17.2] | 11.9% [5.1–14.2] | — |
+| Influenced open rate | 26.7% [7.8–41.4] | 26.1% [18.0–42.8] | — |
+| Sends/user/month | 1.4 [0.6–4.3] | 1.1 [0.4–2.3] | — |
+| Msg Center read rate | — | — | 1.4% [0.7–14.0] |
 
 ### Education  (`education`)
 _aliases: edtech, school, university, learning, e-learning_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 75.8% [36.0–87.7] | 34.6% [22.2–75.7] | — |
-| Direct open rate | 2.4% [0.3–7.8] | 3.6% [0.7–6.4] | 0.0% [0.0–0.0] |
-| Influenced open rate | 13.8% [1.0–52.2] | 30.5% [4.4–52.1] | — |
-| Sends/user/month | 8.0 [1.4–29.8] | 2.7 [0.8–30.2] | — |
-| Msg Center read rate | — | — | 12.7% [4.9–22.2] |
+| Opt-in rate | 75.5% [32.1–87.8] | 30.6% [18.2–72.0] | — |
+| Direct open rate | 2.4% [0.3–7.9] | 3.2% [0.9–5.9] | 0.0% [0.0–0.0] |
+| Influenced open rate | 18.2% [1.0–55.1] | 30.3% [5.3–48.7] | — |
+| Sends/user/month | 10.6 [0.9–30.4] | 2.2 [0.7–29.9] | — |
+| Msg Center read rate | — | — | 15.5% [5.8–26.6] |
 
 ### Entertainment  (`entertainment`)
 _aliases: streaming, ott, vod, music, video, movies_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 48.5% [27.5–65.3] | 48.9% [26.4–62.7] | — |
-| Direct open rate | 1.3% [0.4–6.1] | 1.5% [0.4–7.5] | 0.4% [0.2–0.9] |
-| Influenced open rate | 10.9% [2.8–62.5] | 14.6% [2.1–80.2] | — |
-| Sends/user/month | 5.5 [0.4–129.2] | 5.0 [0.4–101.1] | — |
-| Msg Center read rate | — | — | 1.8% [0.1–29.0] |
+| Opt-in rate | 47.8% [25.2–63.9] | 47.0% [27.7–58.5] | — |
+| Direct open rate | 1.3% [0.4–5.6] | 1.7% [0.4–9.2] | 0.3% [0.2–0.8] |
+| Influenced open rate | 13.1% [3.3–67.3] | 14.5% [2.5–103.2] | — |
+| Sends/user/month | 4.2 [0.2–136.1] | 4.2 [0.5–84.3] | — |
+| Msg Center read rate | — | — | 2.3% [0.1–39.0] |
 
 ### Finance & Insurance  (`finance_insurance`)
 _aliases: bank, banking, insurance, assurance, fintech, finance, banque_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 56.1% [44.8–70.7] | 54.7% [38.3–71.3] | — |
-| Direct open rate | 3.8% [2.7–6.1] | 3.6% [2.3–7.0] | 0.4% [0.1–1.3] |
-| Influenced open rate | 47.2% [25.7–64.9] | 39.1% [26.4–60.5] | — |
-| Sends/user/month | 2.0 [0.7–7.3] | 1.2 [0.5–4.7] | — |
-| Msg Center read rate | — | — | 5.5% [0.1–24.5] |
+| Opt-in rate | 56.3% [45.1–71.2] | 53.8% [36.1–70.9] | — |
+| Direct open rate | 3.7% [2.5–5.7] | 3.4% [2.3–6.5] | 0.8% [0.1–1.8] |
+| Influenced open rate | 47.4% [26.3–65.3] | 37.8% [24.6–53.9] | — |
+| Sends/user/month | 2.1 [0.6–7.5] | 1.2 [0.5–5.2] | — |
+| Msg Center read rate | — | — | 5.2% [0.1–22.9] |
 
 ### Food & Drink  (`food_drink`)
 _aliases: qsr, restaurant, food, drink, delivery, fast food_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 60.1% [30.4–75.3] | 55.7% [30.2–86.5] | — |
-| Direct open rate | 2.3% [1.0–7.1] | 2.8% [0.3–9.6] | 1.7% [1.6–1.9] |
-| Influenced open rate | 18.0% [7.4–61.9] | 15.1% [0.8–59.6] | — |
-| Sends/user/month | 4.0 [1.0–13.9] | 2.9 [0.5–11.1] | — |
-| Msg Center read rate | — | — | 6.4% [2.6–21.8] |
+| Opt-in rate | 59.0% [30.4–75.7] | 54.6% [30.8–83.9] | — |
+| Direct open rate | 2.2% [0.8–7.3] | 2.5% [0.6–8.5] | 1.5% [1.3–1.8] |
+| Influenced open rate | 17.1% [6.9–48.8] | 13.1% [0.5–50.4] | — |
+| Sends/user/month | 3.9 [0.8–15.7] | 2.6 [0.3–12.4] | — |
+| Msg Center read rate | — | — | 6.7% [2.3–21.3] |
 
 ### Gambling, Gaming  (`gambling_gaming`)
 _aliases: gaming, games, casino, betting, gambling, igaming_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 41.8% [22.7–62.6] | 56.6% [22.1–69.6] | — |
-| Direct open rate | 1.7% [0.2–4.8] | 2.4% [0.8–7.5] | 0.9% [0.3–1.5] |
-| Influenced open rate | 52.7% [9.6–236.1] | 45.9% [13.0–197.0] | — |
-| Sends/user/month | 2.8 [0.4–34.5] | 1.7 [0.4–33.7] | — |
-| Msg Center read rate | — | — | 7.7% [0.3–43.0] |
+| Opt-in rate | 41.3% [22.7–63.5] | 55.7% [26.4–72.3] | — |
+| Direct open rate | 1.6% [0.2–4.8] | 2.6% [0.9–6.3] | 1.0% [0.3–2.5] |
+| Influenced open rate | 49.2% [11.0–171.3] | 55.5% [7.1–204.0] | — |
+| Sends/user/month | 2.7 [0.4–33.5] | 1.6 [0.3–29.1] | — |
+| Msg Center read rate | — | — | 3.0% [0.4–24.8] |
 
 ### Government  (`government`)
 _aliases: public sector, gov, administration, civic_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 59.1% [38.9–84.1] | 64.8% [27.5–71.9] | — |
-| Direct open rate | 9.7% [0.8–27.1] | 2.6% [0.8–19.3] | — |
-| Influenced open rate | 17.4% [4.1–122.6] | 15.5% [4.9–83.1] | — |
-| Sends/user/month | 3.8 [0.3–19.9] | 3.2 [0.7–26.8] | — |
-| Msg Center read rate | — | — | 2.7% [0.6–5.9] |
+| Opt-in rate | 59.5% [39.1–83.2] | 63.4% [27.6–78.7] | — |
+| Direct open rate | 8.5% [0.7–20.4] | 4.2% [0.8–23.6] | — |
+| Influenced open rate | 22.0% [3.1–77.6] | 16.2% [3.7–162.8] | — |
+| Sends/user/month | 1.8 [0.1–15.8] | 4.8 [0.4–20.7] | — |
+| Msg Center read rate | — | — | 2.2% [0.5–3.1] |
 
 ### Media  (`media`)
 _aliases: news, publishing, broadcaster, press, journalism, tv, magazine_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 39.1% [29.5–60.0] | 39.8% [18.9–57.8] | — |
-| Direct open rate | 2.2% [0.8–5.0] | 2.5% [0.6–6.2] | 0.4% [0.0–0.9] |
-| Influenced open rate | 6.3% [3.0–13.5] | 8.1% [3.0–19.2] | — |
-| Sends/user/month | 134.8 [12.9–393.5] | 161.1 [9.3–414.4] | — |
-| Msg Center read rate | — | — | 0.2% [0.1–5.5] |
+| Opt-in rate | 39.2% [29.7–60.8] | 38.9% [16.9–57.9] | — |
+| Direct open rate | 1.9% [0.8–4.0] | 2.4% [0.5–5.8] | 0.3% [0.0–0.7] |
+| Influenced open rate | 6.5% [2.8–14.2] | 8.0% [2.8–19.3] | — |
+| Sends/user/month | 130.8 [12.7–407.5] | 157.4 [7.5–415.9] | — |
+| Msg Center read rate | — | — | 0.2% [0.1–4.8] |
 
 ### Medical, Health & Fitness  (`medical_health_fitness`)
 _aliases: health, fitness, medical, wellness, healthcare, pharma_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 51.5% [30.0–71.2] | 57.3% [27.6–76.1] | — |
-| Direct open rate | 5.3% [0.9–22.0] | 8.4% [1.8–28.1] | 0.4% [0.4–0.4] |
-| Influenced open rate | 26.6% [6.9–136.1] | 33.5% [7.4–148.2] | — |
-| Sends/user/month | 1.2 [0.3–10.2] | 1.2 [0.2–13.7] | — |
-| Msg Center read rate | — | — | 3.2% [0.8–5.4] |
+| Opt-in rate | 51.1% [26.6–70.6] | 55.9% [26.2–75.7] | — |
+| Direct open rate | 5.8% [0.9–20.3] | 7.1% [0.4–26.0] | 0.6% [0.6–0.6] |
+| Influenced open rate | 23.6% [5.7–108.3] | 29.1% [7.1–132.6] | — |
+| Sends/user/month | 1.0 [0.3–8.3] | 1.3 [0.3–9.3] | — |
+| Msg Center read rate | — | — | 0.3% [0.1–2.7] |
 
 ### Retail  (`retail`)
 _aliases: ecommerce, e-commerce, grocery, distribution, fashion, shopping, fmcg, supermarket, commerce, marketplace_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 43.5% [19.9–63.9] | 49.3% [21.6–67.0] | — |
-| Direct open rate | 1.8% [0.6–5.1] | 2.9% [0.8–8.7] | 0.6% [0.2–1.4] |
-| Influenced open rate | 9.7% [4.2–37.8] | 11.8% [4.0–46.5] | — |
-| Sends/user/month | 9.6 [1.1–30.6] | 8.6 [0.4–26.0] | — |
-| Msg Center read rate | — | — | 1.6% [0.4–15.9] |
+| Opt-in rate | 43.0% [19.2–64.3] | 47.5% [22.0–66.4] | — |
+| Direct open rate | 1.7% [0.5–5.6] | 2.6% [1.0–9.9] | 0.4% [0.2–1.0] |
+| Influenced open rate | 10.2% [3.6–37.9] | 12.0% [4.4–57.8] | — |
+| Sends/user/month | 8.6 [1.1–29.9] | 8.4 [0.8–25.3] | — |
+| Msg Center read rate | — | — | 2.1% [0.1–15.3] |
 
 ### Social  (`social`)
 _aliases: social network, dating, community, messaging_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 42.3% [18.3–70.9] | 53.1% [23.9–61.9] | — |
-| Direct open rate | 2.7% [1.1–5.1] | 5.2% [1.2–7.0] | — |
-| Influenced open rate | 15.0% [3.3–38.9] | 14.4% [4.6–24.7] | — |
-| Sends/user/month | 10.2 [1.2–96.3] | 14.0 [1.4–88.5] | — |
+| Opt-in rate | 39.5% [17.0–75.3] | 54.0% [17.5–60.7] | — |
+| Direct open rate | 2.6% [1.4–7.8] | 5.7% [1.1–6.7] | — |
+| Influenced open rate | 14.9% [2.1–33.3] | 13.4% [4.2–24.2] | — |
+| Sends/user/month | 11.9 [1.4–105.8] | 21.5 [1.8–116.8] | — |
 | Msg Center read rate | — | — | — |
 
 ### Sports & Recreation  (`sports_recreation`)
@@ -177,31 +177,31 @@ _aliases: sports, recreation, outdoor, league_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 49.0% [31.6–64.3] | 54.9% [27.9–64.6] | — |
-| Direct open rate | 1.5% [0.7–4.8] | 2.2% [0.5–4.2] | 0.0% [0.0–0.6] |
-| Influenced open rate | 6.0% [2.6–22.7] | 8.3% [2.3–28.2] | — |
-| Sends/user/month | 24.4 [1.8–191.2] | 24.4 [1.4–258.9] | — |
-| Msg Center read rate | — | — | 26.2% [9.9–44.7] |
+| Opt-in rate | 49.3% [32.7–65.7] | 54.4% [31.6–66.4] | — |
+| Direct open rate | 1.7% [0.5–3.9] | 2.2% [0.7–4.3] | 0.0% [0.0–0.8] |
+| Influenced open rate | 6.7% [2.2–23.0] | 8.5% [2.7–27.5] | — |
+| Sends/user/month | 14.1 [2.3–209.7] | 15.8 [2.3–212.0] | — |
+| Msg Center read rate | — | — | 27.7% [9.0–47.4] |
 
 ### Travel & Transportation  (`travel_transportation`)
 _aliases: travel, transport, airline, hospitality, mobility, hotel, transportation_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 60.4% [32.1–82.1] | 56.7% [24.5–76.3] | — |
-| Direct open rate | 3.2% [1.1–11.8] | 6.1% [2.0–15.9] | 1.2% [0.5–2.2] |
-| Influenced open rate | 27.3% [6.4–160.5] | 38.8% [8.9–153.6] | — |
-| Sends/user/month | 1.9 [0.2–21.0] | 1.4 [0.1–8.7] | — |
-| Msg Center read rate | — | — | 9.3% [0.5–26.5] |
+| Opt-in rate | 57.2% [26.4–78.0] | 56.8% [20.2–74.7] | — |
+| Direct open rate | 3.2% [0.9–10.8] | 6.0% [2.0–16.7] | 1.1% [0.6–2.0] |
+| Influenced open rate | 28.6% [5.9–169.3] | 40.9% [10.9–145.5] | — |
+| Sends/user/month | 2.0 [0.1–17.7] | 1.8 [0.1–11.2] | — |
+| Msg Center read rate | — | — | 7.3% [0.3–24.3] |
 
 ### Utility & Productivity  (`utility_productivity`)
 _aliases: utility, productivity, tools, telecom, telco, operator, carrier_
 
 | Metric | iOS | Android | Web/All |
 |---|---|---|---|
-| Opt-in rate | 59.8% [32.2–82.5] | 60.2% [31.0–84.8] | — |
-| Direct open rate | 3.5% [0.5–12.7] | 5.7% [0.7–17.5] | 0.2% [0.1–5.9] |
-| Influenced open rate | 27.6% [5.9–116.9] | 23.3% [6.0–110.9] | — |
-| Sends/user/month | 5.6 [0.1–49.9] | 2.5 [0.0–25.3] | — |
-| Msg Center read rate | — | — | 5.3% [0.2–30.1] |
+| Opt-in rate | 60.4% [30.5–83.2] | 61.0% [27.3–84.2] | — |
+| Direct open rate | 3.6% [0.6–12.2] | 6.2% [0.8–17.1] | 0.2% [0.1–5.3] |
+| Influenced open rate | 25.0% [5.0–130.1] | 22.3% [5.1–88.4] | — |
+| Sends/user/month | 3.3 [0.3–54.8] | 1.6 [0.1–20.4] | — |
+| Msg Center read rate | — | — | 4.8% [0.2–18.4] |
 

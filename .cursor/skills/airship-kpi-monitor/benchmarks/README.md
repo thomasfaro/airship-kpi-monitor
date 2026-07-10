@@ -10,7 +10,7 @@ against its industry peers (SKILL.md Step 3d + canvas "Benchmark" section).
 
 ## Provenance
 - Source: **Airship User Engagement (UA) Benchmarks** workbook.
-- Current import: `Q1_2026_UA_Benchmarks_04.02.2026.xlsx`, published **2026-Q1**,
+- Current import: `Q2_2026_UA_Benchmarks_07.09.2026.xlsx`, published **2026-Q2**,
   region **global** (no region/locale split).
 - This reference data is **non-secret** and is committed to the repo. It contains
   no client data.

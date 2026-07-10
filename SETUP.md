@@ -250,7 +250,7 @@ the next client (if any).
 - Mention the **strategic Slack canvas**: instead of week-over-week tables (those
   drive alerting only), it shows verbose alert analysis, an **executive recap**
   with brand-activity context, a **global snapshot & industry benchmark** (from the
-  committed `benchmarks/benchmarks.json`, currently Airship UA Benchmarks Q1 2026),
+  committed `benchmarks/benchmarks.json`, currently Airship UA Benchmarks Q2 2026),
   a **3-month trend** (app opens, sends per platform, marketing pressure, opt-in
   rate, time-in-app), 30-day **email deliverability health**, **top campaigns** by
   type via the Activity Log, and a **unicast** estimate. The strategic sections
