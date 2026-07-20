@@ -687,7 +687,7 @@
   // under file://). Uses the full {t,v} series so points carry dates: hover /
   // tap / arrow-keys reveal a tooltip (value + date); min & max are marked and
   // the date axis is labelled. The compact tile sparkline is left untouched.
-  var CHART_GEO = { W: 680, H: 320, padL: 54, padR: 20, padT: 22, padB: 42 };
+  var CHART_GEO = { W: 860, H: 400, padL: 72, padR: 24, padT: 26, padB: 54 };
   function chartUnitSuffix(unit) {
     return unit === "%" ? "%" : unit === "pts" ? " pts" : unit === "min" ? " min" : unit === "x" ? "x" : "";
   }
@@ -710,23 +710,29 @@
     if (!pts.length) return "";
     var vals = pts.map(function (p) { return p.v; });
     var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
-    var us = chartUnitSuffix(unit);
     var line = pts.map(function (p) { return p.x.toFixed(1) + "," + p.y.toFixed(1); }).join(" ");
     var area = g.padL + "," + (g.H - g.padB) + " " + line + " " + (g.W - g.padR) + "," + (g.H - g.padB);
-    var yVals = [min, (min + max) / 2, max];
-    var grid = yVals.map(function (val) {
-      var frac = max - min ? (val - min) / (max - min) : 0.5;
+    // 5 y-axis gridlines (min, 25%, mid, 75%, max) for tighter guidance
+    var yFracs = [0, 0.25, 0.5, 0.75, 1];
+    var grid = yFracs.map(function (frac) {
+      var val = min + frac * (max - min);
       var y = g.padT + (1 - frac) * (g.H - g.padT - g.padB);
       return '<line class="bchart__grid" x1="' + g.padL + '" y1="' + y.toFixed(1) + '" x2="' + (g.W - g.padR) + '" y2="' + y.toFixed(1) + '"/>' +
-        '<text class="bchart__ylbl" x="' + (g.padL - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + esc(fmt1(val) + us) + "</text>";
+        '<text class="bchart__ylbl" x="' + (g.padL - 8) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end">' + esc(fmtVal(val, unit)) + "</text>";
     }).join("");
-    var xIdx = [0, Math.floor((pts.length - 1) / 2), pts.length - 1].filter(function (v, k, a) { return a.indexOf(v) === k; });
+    // Up to 5 evenly distributed x-axis date labels
+    var nLabels = Math.min(5, pts.length);
+    var xIdx = [];
+    for (var k = 0; k < nLabels; k++) {
+      var idx = Math.round(k * (pts.length - 1) / Math.max(nLabels - 1, 1));
+      if (xIdx.indexOf(idx) === -1) xIdx.push(idx);
+    }
     var xlabels = xIdx.map(function (i) {
       var p = pts[i];
       var d = parseDay(p.t);
       var lbl = d ? fmtDay(d) : (p.t || "");
       var anchor = i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle";
-      return '<text class="bchart__xlbl" x="' + p.x.toFixed(1) + '" y="' + (g.H - g.padB + 18) + '" text-anchor="' + anchor + '">' + esc(lbl) + "</text>";
+      return '<text class="bchart__xlbl" x="' + p.x.toFixed(1) + '" y="' + (g.H - g.padB + 20) + '" text-anchor="' + anchor + '">' + esc(lbl) + "</text>";
     }).join("");
     var maxP = pts.reduce(function (a, b) { return b.v > a.v ? b : a; });
     var minP = pts.reduce(function (a, b) { return b.v < a.v ? b : a; });
@@ -734,10 +740,10 @@
       '<circle class="bchart__mark bchart__mark--max" cx="' + maxP.x.toFixed(1) + '" cy="' + maxP.y.toFixed(1) + '" r="4"/>' +
       '<circle class="bchart__mark bchart__mark--min" cx="' + minP.x.toFixed(1) + '" cy="' + minP.y.toFixed(1) + '" r="4"/>';
     var dots = pts.map(function (p) { return '<circle class="bchart__dot" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3"/>'; }).join("");
-    var summary = "Line chart of " + series.length + " points \u00B7 min " + fmt1(min) + us + " \u00B7 max " + fmt1(max) + us;
+    var summary = "Line chart of " + series.length + " points \u00B7 min " + fmtVal(min, unit) + " \u00B7 max " + fmtVal(max, unit);
     return (
       '<div class="bchart">' +
-        '<svg class="bchart__svg" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="none" role="img" tabindex="0" aria-label="' + esc(summary) + '">' +
+        '<svg class="bchart__svg" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="xMidYMid meet" role="img" tabindex="0" aria-label="' + esc(summary) + '">' +
           '<polyline class="bchart__area" points="' + area + '"/>' +
           grid +
           '<polyline class="bchart__line" points="' + line + '"/>' +
@@ -762,7 +768,6 @@
     var hot = root.querySelector(".bchart__hot");
     if (!svg || !series.length) return;
     var pts = chartPoints(series);
-    var us = chartUnitSuffix(unit);
     var g = CHART_GEO;
     var active = -1;
     function show(i) {
@@ -774,7 +779,7 @@
       var d = parseDay(p.t);
       var dlbl = d ? fmtDay(d) : (p.t || "");
       tip.hidden = false;
-      tip.innerHTML = "<strong>" + esc(fmt1(p.v) + us) + "</strong>" + (dlbl ? ' <span class="bchart__tip-d">' + esc(dlbl) + "</span>" : "");
+      tip.innerHTML = "<strong>" + esc(fmtVal(p.v, unit)) + "</strong>" + (dlbl ? ' <span class="bchart__tip-d">' + esc(dlbl) + "</span>" : "");
       tip.style.left = (p.x / g.W * 100) + "%";
       tip.style.top = (p.y / g.H * 100) + "%";
     }
@@ -1414,7 +1419,6 @@
     timeinapp: { src: "/api/reports/timeinapp", calc: "Average time-in-app per day (Airship value), per OS. WoW \u0394% vs the previous 7-day window." },
     push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days." },
     push_pressure_per_user: { src: "/api/reports/sends \u00F7 /api/reports/devices?date=", calc: "Weekly push pressure = push sends (iOS+Android) \u00F7 opted-in devices, per weekly bucket (msg/user/wk). Denominator is the per-week opted-in base via /api/reports/devices?date=<week end> (falls back to the current opted-in snapshot, labelled a proxy, if a week's dated call is unavailable). `series` is the multi-week evolution." },
-    optouts: { src: "/api/reports/optouts \u00F7 /api/reports/sends", calc: "\u03A3 push opt-outs over 7 days, per OS. Two signals: RAW COUNT (WoW \u0394%) and the per-send RATE = opt-outs \u00F7 push sends \u00D7 100. The alert fires only when BOTH the raw count rises \u2265 optouts_rise_pct AND the rate worsens \u2265 optout_rate_rise_pct \u2014 so a volume-driven rise (rate flat/down while sends grow) is suppressed." },
     optin_optout_ratio: { src: "/api/reports/optins \u00F7 /api/reports/optouts", calc: "Daily opt-in \u00F7 opt-out ratio, per OS (iOS/Android only \u2014 neither endpoint returns web/SMS series). `series` IS the trend: the daily ratio across the 7-day window (not a separate WoW-only figure). A day with 0 opt-outs is EXCLUDED from the trend average and from `series` (undefined ratio) rather than shown as an artificial spike. WoW \u0394% compares the current window's average ratio to the previous window's. Ratio > 1 = net-positive reach (more opt-ins than opt-outs that day); < 1 = churn-dominant." },
     direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100, per OS, over the 7-day window. WoW \u0394 in percentage points. Tracking-health signal." },
     total_devices_evolution: { src: "/api/reports/devices?date=<start> \u00B7 ?date=<end>", calc: "Total unique-device evolution, per OS + total = % growth/decline between two dated /api/reports/devices calls. GET /api/reports/devices?date=<date-time> counts all device events that occurred before that date-time and returns total_unique_devices + counts.{ios,android,\u2026}.unique_devices; evolution = (end \u2212 start) \u00F7 start \u00D7 100 over the window (start = window start, end = window end / today). Merges the former installs proxy and unique-devices trend into one." },
@@ -1433,9 +1437,9 @@
     custom_event: { src: "/api/reports/events", calc: "\u03A3 custom-event count over 7 days. WoW \u0394% vs previous 7 days." },
   };
   // Resolve the KPI family name for a metric key by longest matching family.
-  // Canonical metric keys equal the family name exactly (e.g. "optouts",
+  // Canonical metric keys equal the family name exactly (e.g. "app_opens",
   // "direct_response_rate"); the longest-prefix fallback keeps old snapshots that
-  // baked OS/direction into the key (e.g. "optouts_ios") still resolving.
+  // baked OS/direction into the key (e.g. "app_opens_ios") still resolving.
   function kpiFamily(key) {
     var k = String(key || "");
     var best = null;
@@ -1455,7 +1459,7 @@
   // consistent, sensible order regardless of the emit order in dashboard-data.js.
   var FAMILY_ORDER = [
     "app_opens", "timeinapp", "optin_optout_ratio",
-    "push_sends", "push_pressure_per_user", "optouts", "direct_response_rate",
+    "push_sends", "push_pressure_per_user", "direct_response_rate",
     "total_devices_evolution", "devices_optin", "devices_uninstall",
     "email_sends", "email_deliverability", "email_open_rate", "email_bounce",
     "email_unsubscribe", "email_spam_complaint_rate", "email_delay_rate",
@@ -1626,8 +1630,8 @@
     } else {
       sparkHtml = m.status === "na" ? "" : '<div class="kcard__spark kcard__spark--empty">\uD83D\uDCC8 History building\u2026</div>';
     }
-    // Opt-out (and any rate-correlated) metrics carry a `rate` object so the raw
-    // count is read alongside the per-send rate that actually drives the alert.
+    // Any raw-count metric may carry an optional `rate` object so the raw count
+    // is read alongside a per-send rate (kept for backward compatibility).
     var rateHtml = "";
     if (m.rate) {
       var r = m.rate;

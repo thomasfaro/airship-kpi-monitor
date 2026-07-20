@@ -145,7 +145,7 @@ window.AIRSHIP_KPI_DATA = {
           // CANONICAL SHAPE: one metric per KPI FAMILY, OS split in the `os` OBJECT
           // (never baked into `key`). This project shows FULL mobile coverage:
           //   App & engagement → app_opens + timeinapp + optin_optout_ratio
-          //   Push             → push_sends + push_pressure_per_user + optouts + direct_response_rate (each with os)
+          //   Push             → push_sends + push_pressure_per_user + direct_response_rate (each with os)
           //   Acquisition      → total_devices_evolution + devices_optin + devices_uninstall (two-date evolution)
           metrics: [
             {
@@ -200,23 +200,6 @@ window.AIRSHIP_KPI_DATA = {
                 { t: "2026-04-27", v: 3.2 }, { t: "2026-05-04", v: 3.4 }, { t: "2026-05-11", v: 3.5 },
                 { t: "2026-05-18", v: 3.6 }, { t: "2026-05-25", v: 3.7 }, { t: "2026-06-01", v: 3.9 },
                 { t: "2026-06-08", v: 3.8 }, { t: "2026-06-15", v: 4.0 }, { t: "2026-06-22", v: 4.1 },
-              ],
-            },
-            {
-              // Opt-outs — ONE family metric with the per-OS split in the `os` object.
-              // Volume-driven rise: raw count up, but the per-send RATE fell (sends grew
-              // faster) → alert suppressed by the rate-correlation gate (Step 8a).
-              key: "optouts", label: "Opt-outs", group: "push", channel: "push", unit: "count",
-              current: 44000, previous: 32000, deltaPct: 37.5,
-              os: { ios: { deltaPct: 41.2 }, android: { deltaPct: 33.1 } },
-              rate: { current: 4.5, previous: 5.4, deltaPct: -16.7 },
-              threshold: { key: "optout_rate_rise_pct", value: 15, kind: "rise", headroom: 31.7, breaching: false },
-              status: "ok",
-              note: "Raw +37.5% but rate/send 5.4%→4.5% (sends +65%) — volume-driven, suppressed.",
-              analysis: "Opt-out raw count up 37% (iOS +41% / Android +33%) but the per-send rate fell 5.4%->4.5% as sends grew - volume-driven, not a churn signal.",
-              series: [
-                { t: "2026-06-18", v: 5800 }, { t: "2026-06-19", v: 6100 }, { t: "2026-06-20", v: 6400 },
-                { t: "2026-06-21", v: 6300 }, { t: "2026-06-22", v: 6500 }, { t: "2026-06-23", v: 6600 }, { t: "2026-06-24", v: 6300 },
               ],
             },
             {
@@ -306,7 +289,7 @@ window.AIRSHIP_KPI_DATA = {
           ],
           // Threshold-suggestion keys the TAM dismissed from the dashboard — the
           // skill must NOT re-emit them (filtered client-side too, belt-and-braces).
-          dismissedSuggestions: ["optout_rate_rise_pct"],
+          dismissedSuggestions: ["timeinapp_drop_pct"],
           // For watch/alert projects, `trend` is an ARRAY → rendered as bullet
           // points (one driver per line). For stable projects use a plain string.
           trend: [

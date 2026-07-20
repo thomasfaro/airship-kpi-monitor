@@ -2209,11 +2209,11 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
 /* Opened inside the shared .dialog modal; widen the dialog when it hosts a
    chart so the SVG has room. Pure inline SVG — no external assets (file:// ok). */
 .dialog:has(.bchart) {
-  max-width: 760px;
+  max-width: min(92vw, 1020px);
 }
 .bchart {
   position: relative;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 .bchart__svg {
   display: block;
@@ -2221,6 +2221,7 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   height: auto;
   cursor: crosshair;
   border-radius: var(--radius-sm);
+  min-height: 280px;
 }
 .bchart__svg:focus-visible {
   outline: 2px solid var(--accent);
@@ -2245,7 +2246,7 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
 .bchart__ylbl,
 .bchart__xlbl {
   fill: var(--text-faint);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--mono);
 }
 .bchart__dot {

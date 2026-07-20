@@ -19,7 +19,7 @@ directly from Cursor chat using your local MCP servers.
 |---|---|
 | **App** | Mobile app opens (per OS), unique devices as a within-window start→end **period trend** (per OS, from accumulated daily canvas snapshots — `/api/reports/devices` has no date-range support), opt-in / opt-out ratio (per OS) |
 | **Engagement** | Avg time in app /day (per OS) |
-| **Mobile push** | Sends, opt-outs, direct response rate (per OS — direct rate collapse flags a tracking/SDK issue) |
+| **Mobile push** | Sends, direct response rate (per OS — direct rate collapse flags a tracking/SDK issue) |
 | **Acquisition** | Opted-in / uninstalled device base (iOS, Android, Web) — current snapshot always shown; WoW Δ vs the canvas D-7 snapshot (else "Δ n/a, history pending") + net opt-in balance (opt-ins − opt-outs), per OS; plus a net-new-devices **installs proxy** per OS (Δ unique devices — the Reports API has no installs endpoint) |
 | **Email** | Sends, deliverability, open rate, bounce rate, unsubscribes, daily spam complaint rate, daily delay rate |
 | **Web push** | Sends (if channel active) |
@@ -273,7 +273,7 @@ read-only under `file://`, full CRUD in served mode). Monitor is now a
   back) —   the centralized view of one project: **every monitored KPI on its active
   channels, healthy ones included** (not just problems) — **one card per KPI
   family** (app opens, time in app, unique-devices trend, opt-in/opt-out ratio,
-  push sends, opt-outs, click rate, installs, opted-in/uninstalled devices, the
+  push sends, click rate, installs, opted-in/uninstalled devices, the
   full email family, web, SMS, custom events). At-a-glance
   tiles; **per-channel KPI cards** (current vs previous, WoW delta, iOS/Android split, a
   mini-sparkline history and a **headroom gauge** showing the margin to the alert
@@ -451,7 +451,6 @@ Thresholds tagged "per OS" are evaluated independently for iOS and Android.
 | `devices_optin_drop_pct` | 5 | Opted-in drop > 5% vs canvas D-7 snapshot → alert (per OS) |
 | `devices_uninstall_rise_pct` | 10 | Uninstall count rise > 10% vs canvas D-7 snapshot → alert (per OS) |
 | `push_sends_drop_pct` | 100 | Push sends drop > 100% (zero sends) → alert (per OS) |
-| `optouts_rise_pct` | 20 | Opt-outs rise > 20% → alert (per OS) |
 | `direct_response_rate_min` | 0.5 | Direct response rate < 0.5% → alert (per OS) |
 | `direct_response_collapse_pct` | 60 | Direct response rate WoW drop ≥ 60% on an OS → likely tracking/SDK issue |
 | `optin_optout_ratio_drop_pct` | 30 | Opt-in/opt-out ratio WoW drop > 30% **and** a declining within-window trend → alert (per OS) |

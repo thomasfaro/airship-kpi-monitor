@@ -3,7 +3,7 @@ name: airship-kpi-monitor
 description: >-
   Daily Airship KPI monitoring with rolling 7-day window comparison, analysed
   per OS (iOS / Android). Detects significant variations in app opens, time in
-  app, push sends/opt-outs, direct response rate (tracking-health signal),
+  app, push sends, direct response rate (tracking-health signal),
   opt-in/opt-out ratio, email metrics (including daily spam complaint and delay
   rates), web push, SMS sends and delivery rate, and custom events. A
   multi-run confirmation gate + hysteresis + cadence-aware suppression removes
@@ -466,7 +466,6 @@ denominator used.**
 |---|---|---|
 | App opens (per OS) | `/api/reports/opens` | raw count |
 | Push sends (per OS) | `/api/reports/sends` | raw count |
-| Push opt-outs (per OS) | `/api/reports/optouts` | rate = opt-outs / push sends |
 | Opt-in / opt-out ratio (per OS) | `/api/reports/optins` ÷ `/api/reports/optouts` | Daily opt-ins ÷ opt-outs (iOS/Android only — neither endpoint returns a web/SMS series). Both endpoints are still fetched exactly as before; they now feed this **App & engagement** ratio card instead of a standalone "Opt-in registrations" tile. Ratio > 1 = net-positive reach that day; < 1 = churn-dominant |
 | Push pressure per user per week (family `push_pressure_per_user`, Push section) | `/api/reports/sends` ÷ `/api/reports/devices?date=` | Weekly push sends (iOS+android) ÷ opted-in devices, unit `msg/user/wk`. Denominator is the **per-week opted-in base** via `/api/reports/devices?date=<week end>` (batched, Step 6); falls back to the current opted-in snapshot **labelled a proxy** when a week's dated call is unavailable. `series` is the multi-week evolution. Promotes the Step 7b marketing-pressure formula to a per-project dashboard family |
 | Click rate (direct responses, per OS) | `/api/reports/responses` | rate = direct / push sends (labelled "Click rate" in outputs) |
@@ -1343,9 +1342,6 @@ optin_optout_ratio_drop_pct: 30  # avg ratio WoW drop > 30% AND within-window tr
 
 # Push mobile (evaluated PER OS: ios, android)
 push_sends_drop_pct: 100        # drop > 100% (i.e. zero sends) → alert
-optouts_rise_pct: 20            # push opt-out RAW COUNT rise > 20% → magnitude pre-filter (necessary, not sufficient)
-optout_rate_rise_pct: 15        # AND the opt-out RATE per send must rise ≥ 15% WoW → alert. If the raw count
-                                #   grows because sends/audience grew (rate flat or down), it is volume-driven → NO alert
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 direct_response_collapse_pct: 60 # WoW drop of direct response RATE ≥ 60% on an OS → likely tracking/SDK issue
 
@@ -1428,18 +1424,6 @@ push_sends_{os}_previous = sum(sends.{os}) over previous window
 push_sends_{os}_delta_pct = (current - previous) / previous * 100
 # Source: /api/reports/sends
 
-# Push opt-outs (raw + rate vs sends)
-push_optouts_{os}_current  = sum(optouts.{os}) over current window
-push_optouts_{os}_previous = sum(optouts.{os}) over previous window
-push_optouts_{os}_delta_pct = (push_optouts_{os}_current - push_optouts_{os}_previous) / push_optouts_{os}_previous * 100
-push_optout_rate_{os}_current  = push_optouts_{os}_current  / push_sends_{os}_current  * 100
-push_optout_rate_{os}_previous = push_optouts_{os}_previous / push_sends_{os}_previous * 100
-push_optout_rate_{os}_delta_pct = (push_optout_rate_{os}_current - push_optout_rate_{os}_previous) / push_optout_rate_{os}_previous * 100
-# Source: /api/reports/optouts (rate denominator = /api/reports/sends)
-# (a device can opt out without opening the push → denominator is sends)
-# The alert correlates BOTH: the raw count must rise materially AND the per-send rate
-# must worsen. When sends grow proportionally (rate flat/down), the rise is volume-driven → suppressed.
-
 # Direct response rate (tracking-health signal)
 direct_response_rate_{os}_current  = direct_{os}_current  / push_sends_{os}_current  * 100
 direct_response_rate_{os}_previous = direct_{os}_previous / push_sends_{os}_previous * 100
@@ -1469,8 +1453,10 @@ optin_optout_ratio_{os}_delta_pct = (current - previous) / previous * 100
 # from the ratio above; both read the same two endpoints)
 optins_{os}_current  = sum(optins.{os}) over current window
 optins_{os}_previous = sum(optins.{os}) over previous window
-net_optin_{os}_current  = optins_{os}_current  - push_optouts_{os}_current
-net_optin_{os}_previous = optins_{os}_previous - push_optouts_{os}_previous
+optouts_{os}_current  = sum(optouts.{os}) over current window
+optouts_{os}_previous = sum(optouts.{os}) over previous window
+net_optin_{os}_current  = optins_{os}_current  - optouts_{os}_current
+net_optin_{os}_previous = optins_{os}_previous - optouts_{os}_previous
 # Source: /api/reports/optins (net uses /api/reports/optouts)
 
 # Push pressure per user per week (family push_pressure_per_user, Push section).
@@ -1622,7 +1608,6 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 | `app_opens_drop_{os}` | app_opens_{os}_delta_pct ≤ −app_opens_drop_pct **OR** abs(app_opens_ios_delta_pct − app_opens_android_delta_pct) > app_opens_cross_os_gap_pts (when the gap fires, alert **both** iOS and Android) |
 | `timeinapp_drop_{os}` | timeinapp_{os}_delta_pct ≤ -timeinapp_drop_pct |
 | `push_sends_drop_{os}` | push_sends_{os}_delta_pct ≤ -push_sends_drop_pct |
-| `push_optouts_rise_{os}` | push_optouts_{os}_delta_pct ≥ optouts_rise_pct **AND** push_optout_rate_{os}_delta_pct ≥ optout_rate_rise_pct (raw-count rise correlated with a real per-send rate worsening; a volume-driven rise where the rate is flat/down is **suppressed**) |
 | `direct_response_low_{os}` | direct_response_rate_{os}_current < direct_response_rate_min |
 | `direct_response_collapse_{os}` | direct_rate_drop_pct_{os} ≥ direct_response_collapse_pct |
 | `optin_optout_ratio_drop_{os}` | optin_optout_ratio_{os}_delta_pct ≤ -optin_optout_ratio_drop_pct **AND** the current window's ratio series is declining (last non-omitted daily ratio < first non-omitted daily ratio) — avoids firing on a single noisy day |
@@ -1742,24 +1727,6 @@ window with no send is normal cadence, not an incident. Only a **normally-daily*
 sender (`ratio ≥ cadence_daily_ratio`) going silent raises an alert, and it still
 passes through the confirm-runs gate above.
 
-**Volume-driven opt-out suppression.** A `push_optouts_rise_{os}` breach is
-correlated with the per-send RATE **before** it can become a candidate:
-
-```
-rate_delta = push_optout_rate_{os}_delta_pct   # (rate_current - rate_previous) / rate_previous * 100
-
-if push_optouts_{os}_delta_pct ≥ optouts_rise_pct AND rate_delta < optout_rate_rise_pct:
-    suppress → NOT even a candidate; log "suppressed: volume-driven opt-outs
-    (raw +{raw}%, rate {rate_prev}%→{rate_cur}% = {rate_delta}%, sends {+/-S}%)"
-```
-
-Rationale: when the audience grows and send volume rises, the absolute opt-out
-count rises mechanically. If the **rate per send** stays flat or falls, engagement
-is not degrading — this is expected and must not alert (e.g. a broadcaster doing
-seasonal blasts). Only a breach where the raw count rose **and** the per-send rate
-also worsened (`rate_delta ≥ optout_rate_rise_pct`) becomes a candidate and passes
-through the confirm-runs gate.
-
 **Muted keys short-circuit the entire gate** (evaluated first, as today): a muted
 key is never a candidate, never confirmed, never escalated.
 
@@ -1830,7 +1797,6 @@ Check whether the alert is mechanically explained by another metric on the
 | `app_opens_drop_{os}` | If triggered by cross-OS gap only → `"App opens WoW diverged: iOS {ios_delta}% vs Android {android_delta}% (gap {gap} pts > {threshold} pts threshold) — investigate platform-specific tracking, SDK, or campaign mix (source: /api/reports/opens)."` If push_sends_{os} also dropped proportionally → `"App opens drop on {os} is consistent with the -X% push send reduction on {os} (source: /api/reports/opens vs /api/reports/sends)."` |
 | `timeinapp_drop_{os}` | If app_opens_{os} also dropped → engagement-wide erosion on {os}; if opens stable → deeper in-session disengagement. Cite /api/reports/timeinapp. |
 | `direct_response_collapse_{os}` | **Prioritise tracking hypothesis**: `"Direct response rate on {os} collapsed from X% to Y% (direct / push sends, source /api/reports/responses) while sends stayed normal → most likely an attribution/SDK tracking issue on {os}, not a real engagement drop. Recommend checking SDK version / response tracking on {os}."` |
-| `push_optouts_rise_{os}` | This alert now fires ONLY when the per-send RATE also worsened (volume-driven rises are suppressed by the gate). Cause must state both: `"Opt-outs on {os} +X% WoW AND the opt-out RATE per send rose from Y% to Z% (+P% WoW) despite sends {+/-S}% → genuine engagement/deliverability concern, not volume-driven (source: /api/reports/optouts ÷ /api/reports/sends)."` |
 | `optin_optout_ratio_drop_{os}` | Opt-in/opt-out **ratio** (daily opt-ins ÷ opt-outs). Check whether the drop is driven by fewer opt-ins, more opt-outs, or both (compare both series). If push_sends_{os} or app_opens_{os} also dropped → lower opted-in-device activity on {os} alongside lower overall activity; if opens/sends are stable, suspect a registration/SDK/tracking regression or a churn event. Cite /api/reports/optins ÷ /api/reports/optouts. |
 | `net_optin_negative_{os}` | Note whether driven by fewer opt-ins or more opt-outs (compare both series, source /api/reports/optins and /api/reports/optouts). |
 | `email_sends_drop` | Check day-by-day: is the drop concentrated on specific days or spread evenly? |
@@ -2015,18 +1981,6 @@ cause line at the bottom of the message. If no cause was identified, write:
 - Always show the **OS** for app/push/engagement/acquisition KPIs. When a
   metric is breached on one OS only, show that OS row plus the other OS for
   context.
-
-- Push opt-outs must appear as **"Push opt-outs (vs sends)"** — never just
-  "Opt-outs". Always show both the raw count AND the opt-out rate per send on
-  the same row:
-
-  ```
-  | Push opt-outs (vs sends) | iOS | 1.68M (7.7%) | 2.44M (5.7%) | ⬆️ +45% raw / ⬇️ -2.1 pts rate |
-  ```
-
-  Add a footnote line under the table when the raw count rose but the rate
-  *improved*:
-  `> ℹ️ Raw count increase is volume-driven (push sends also +98%); opt-out rate per send improved.`
 
 - Direct response must appear as **"Click rate (vs sends)"** (direct responses =
   push clicks) with the denominator and source stated. When a collapse fires, add
@@ -2684,14 +2638,44 @@ file:
   `file://`, so the data is a JS file that assigns a global which `index.html`
   loads via a `<script>` tag.
 
-1. **Read-merge-write history.** Before writing, read the existing
-   `dashboard-data.js` if present and reuse its `history` array (and each
-   project's `alertHistory`, and **each metric's `series`** — see `metrics`
-   below). Append this run's point to each, keep the **last ~14** `history`
-   entries and the **last ~12** points per metric `series`, then rewrite the
-   whole file. If the old file is missing or unparseable, start fresh
-   (fail-open). On a **weekly run** (Step 7b open), you may seed a longer
-   `series` from the 3-month history already fetched instead of only appending.
+1. **Read-merge-write history — append TODAY'S point to EVERY series (MANDATORY,
+   every run).** Before writing, read the existing `dashboard-data.js` if present
+   and reuse its `history` array, each project's `alertHistory`, and **each
+   metric's `series`**. Then, on **every** run (daily, `alerts-only`, AND weekly):
+   - Append one point to the top-level `history`
+     (`{ts, openAlerts, projectsInAlert}`).
+   - For **EVERY** metric family emitted in `metrics[]` — **not only** the device
+     snapshots — append this run's daily point `{ t: "<current_window_end>",
+     v: <value> }` to that family's `series`, using the SAME value convention the
+     family already uses (per the coverage map below):
+       - `app_opens` / `push_sends` / `email_sends` / `web_sends` / `sms_sends` /
+         `timeinapp` → that day's **total** (ios+android[+web/sms] as applicable);
+       - `optin_optout_ratio` → that day's **optins ÷ optouts**;
+       - `direct_response_rate` → that day's **direct ÷ sends × 100**;
+       - `email_*` rate families → that day's rate;
+       - `total_devices_evolution` / `devices_*` → the dated snapshot value;
+       - `push_pressure_per_user` → the week's value.
+   - **Backfill gaps.** If more than one new daily row is available since the last
+     stored point (e.g. runs were missed), append **one point per missing day** so
+     the series never develops a gap — do not jump straight to today.
+   - Keep the **last ~14** `history` entries and the **last ~12** points per metric
+     `series` (drop the oldest beyond that), then rewrite the whole file.
+
+   > ⚠️ **Common failure to avoid (regression seen in practice).** Refreshing only
+   > the headline `current` / `previous` / `deltaPct` / `status` / `threshold` and
+   > the device series while leaving the app/push/engagement `series` untouched
+   > freezes every history chart on the last full run. A patch that appends to a
+   > *hand-picked list* of families is the usual cause — **iterate over ALL
+   > families instead.**
+   >
+   > ✅ **Self-check before writing the file:** the newest `t` in **every** non-`na`
+   > family's `series` MUST equal `current_window_end` (or the latest day actually
+   > available). If any family's series still ends on an earlier date, its point was
+   > not appended — fix it before writing.
+
+   If the old file is missing or unparseable, start fresh (fail-open). On a
+   **weekly run** (Step 7b open), you may seed a longer `series` from the 3-month
+   history already fetched instead of only appending.
 
 2. **File shape** (exact global; values from this run and `clients.yml` —
    **no secrets**):
@@ -2730,13 +2714,13 @@ file:
            // and mini-series. Optional but strongly recommended.
            // CANONICAL NAMING (see "Metric family naming" below): `key` is the KPI
            // FAMILY name (app_opens, timeinapp, optin_optout_ratio,
-           // push_sends, push_pressure_per_user, optouts, direct_response_rate,
+           // push_sends, push_pressure_per_user, direct_response_rate,
            // total_devices_evolution, devices_optin,
            // devices_uninstall, email_sends, email_deliverability, email_open_rate,
            // email_bounce, email_unsubscribe, email_spam_complaint_rate,
            // email_delay_rate, web_sends, sms_sends, sms_delivery_rate, custom_event).
            // ONE metric per family — NEVER bake the OS or direction into the key
-           // (no `optouts_ios`/`time_in_app`); the per-OS split lives in the `os`
+           // (no `app_opens_ios`/`time_in_app`); the per-OS split lives in the `os`
            // OBJECT below. `threshold.key` is the exact catalog key (thresholds-catalog.js).
            metrics: [ { key: "<KPI family key — see the coverage map below>", label: "<human label>",
                           group: "app|push|acquisition|email|web|sms|custom",
@@ -2746,9 +2730,9 @@ file:
                           deltaPct: <n|omit>, deltaPts: <n|omit>,          // WoW change (pick the one that fits the metric); omit both when not computable (e.g. device snapshot with no D-7, or a unique-devices trend with <2 stored snapshots)
                           // Per-OS split — an OBJECT (NOT a scalar, NOT baked into `key`).
                           // REQUIRED on every family that has per-OS data: app_opens,
-                          // timeinapp, optin_optout_ratio, push_sends,
-                          // optouts, direct_response_rate, total_devices_evolution,
-                          // devices_*. The card
+           // timeinapp, optin_optout_ratio, push_sends,
+           // direct_response_rate, total_devices_evolution,
+           // devices_*. The card
                           // renders the split ONLY from this object: it shows each OS's
                           // `deltaPct` chip when present, else its absolute `value`. Use
                           // `deltaPct` for WoW rate/volume KPIs (incl. rate KPIs like
@@ -2759,9 +2743,7 @@ file:
                           // genuinely channel-wide metrics with no OS breakdown (e.g.
                           // email/sms/web/custom).
                           os: { ios: { deltaPct: <n> | value: <n> }, android: { … }, web: { … } } | null,
-                          // For opt-outs (and any raw count with a correlated ratio): the per-send RATE.
-                          // The opt-out alert fires only when BOTH the raw count and this rate rise;
-                          // a volume-driven rise (rate flat/down) is suppressed (Step 8a). Omit if n/a.
+                          // Optional per-send RATE object for any raw-count metric that also tracks a rate. Omit if n/a.
                           rate: { current: <n>, previous: <n>, deltaPct: <n> } | { note: "<qualitative>" } | omit,
                           note: "<one-line caption, e.g. why a rise was suppressed>" | omit,
                           analysis: "<one client-contextualized sentence: reads the value + WoW evolution, position vs benchmark when relevant, brief brand/activity context, and whether it is a concern>" | omit,
@@ -2810,7 +2792,7 @@ file:
      **every monitored KPI**, its evolution and any problem. Emit **one entry per
      monitored KPI on every channel the project actually uses — including the
      healthy ones**, not only breaching KPIs (app opens, time in app, push sends,
-     opt-outs, click rate, opt-in velocity, devices, the email family, web push,
+     click rate, opt-in velocity, devices, the email family, web push,
      SMS, each custom event). Coverage rules:
        - **Active channels only.** If a channel is not used by the project (e.g. no
          SMS or no web push at all — zero base/sends across the window), **omit its
@@ -2877,19 +2859,19 @@ file:
      - **Metric family naming (canonical — no exceptions).** `metrics[].key` is the
        KPI **family** name, identical to the `KPI_META` key in `app.js` and resolving
        to the catalog thresholds. Emit **exactly one metric per family**; carry the OS
-       breakdown in the `os` OBJECT, **never** in the key. Do **not** emit
-       `optouts_ios`/`optouts_android`, `time_in_app`, `custom_events`,
+       breakdown in the `os` OBJECT, **never** in the key.        Do **not** emit
+       `app_opens_ios`/`app_opens_android`, `time_in_app`, `custom_events`,
        `email_bounce_rate`, `web_push_sends`, `email_spam_rate`, or any OS/direction
        suffix — the correct families are:
        `app_opens`, `timeinapp`, `optin_optout_ratio`, `push_sends`,
-       `push_pressure_per_user`, `optouts`, `direct_response_rate`,
+       `push_pressure_per_user`, `direct_response_rate`,
        `total_devices_evolution`, `devices_optin`,
        `devices_uninstall`, `email_sends`, `email_deliverability`, `email_open_rate`,
        `email_bounce`, `email_unsubscribe`, `email_spam_complaint_rate`,
        `email_delay_rate`, `web_sends`, `sms_sends`, `sms_delivery_rate`,
        `custom_event`. Each metric's `threshold.key` is the exact key from
        `dashboard/thresholds-catalog.js` (e.g. family `timeinapp` → `timeinapp_drop_pct`;
-       `optouts` → `optout_rate_rise_pct`; `push_pressure_per_user` → `push_pressure_per_user_max`;
+       `push_pressure_per_user` → `push_pressure_per_user_max`;
        `total_devices_evolution` → `total_devices_evolution_drop_pct`;
        `optin_optout_ratio` → `optin_optout_ratio_drop_pct`; `email_bounce` →
        `email_bounce_max`; `email_spam_complaint_rate` → `email_spam_complaint_rate_max`;
@@ -2900,7 +2882,7 @@ file:
        | Section (`group`) | Families to emit (per active channel) | Per-OS `os` object? |
        |---|---|---|
        | `app` | `app_opens`, `timeinapp`, `optin_optout_ratio` | yes (iOS/Android) |
-       | `push` | `push_sends`, `push_pressure_per_user`, `optouts`, `direct_response_rate` | **yes for sends/opt-outs/click rate;** `push_pressure_per_user` is a per-project weekly figure (no OS object) |
+       | `push` | `push_sends`, `push_pressure_per_user`, `direct_response_rate` | **yes for sends/click rate;** `push_pressure_per_user` is a per-project weekly figure (no OS object) |
        | `acquisition` | `total_devices_evolution`, `devices_optin`, `devices_uninstall` | yes (per-OS `deltaPct` from the two dated calls; `value` when only one dated call; +`web`/`sms` when active) |
        | `email` | `email_sends`, `email_deliverability`, `email_open_rate`, `email_bounce`, `email_unsubscribe`, `email_spam_complaint_rate`, `email_delay_rate` | no (channel-wide) |
        | `web` | `web_sends` | no |
