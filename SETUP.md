@@ -234,7 +234,7 @@ the next client (if any).
     auto-starts the server; open `http://127.0.0.1:8787` (or double-click
     `dashboard/serve.command`). Monitor is a **fleet list** that opens a **deep
     project page** per project (a centralized view of **every monitored KPI** on
-    the project's active channels — value, WoW evolution, history and a one-line
+    the project's active channels — value, 30-day evolution, history and a one-line
     contextualized analysis — with headroom gauges and an **inline editable alert
     threshold** per card, plus an alerts timeline). There
     they can manage routing (**Setup** tab), mute alerts, edit per-project
@@ -247,24 +247,24 @@ the next client (if any).
   [README.md](README.md) and [MODOP.md](MODOP.md) §2.3.
 - Mention **muting false positives** and **per-project thresholds** (below) so the
   user knows alerts can be silenced and tuned without losing visibility.
-- Mention the **strategic Slack canvas**: instead of week-over-week tables (those
-  drive alerting only), it shows verbose alert analysis, an **executive recap**
-  with brand-activity context, a **global snapshot & industry benchmark** (from the
-  committed `benchmarks/benchmarks.json`, currently Airship UA Benchmarks Q2 2026),
-  a **3-month trend** (app opens, sends per platform, marketing pressure, opt-in
-  rate, time-in-app), 30-day **email deliverability health**, **top campaigns** by
-  type via the Activity Log, and a **unicast** estimate. The strategic sections
-  refresh on a **weekly cadence** (daily runs stay light). A dedicated
-  **canvas-only** command
-  (`Run airship-kpi-monitor canvas` / "update canvas only") refreshes the Slack
-  canvas — including those sections — **without** posting any Slack alerts;
-  handy as a weekly `/loop`.
+- Mention the **short Slack canvas**: **key metrics** as one scannable table per
+  section, with per-OS detail and vertical benchmarks, comparing the **last 30
+  days against the previous 30** — the same window the alerting engine and the
+  dashboard use, so the client and the TAM read the same deltas — an **email**
+  block with a 0–100 **sender score** when the project sends email — optionally
+  enriched with **per-mailbox-provider deliverability** from SparkPost and
+  **Gmail reputation** from Google Postmaster Tools (MODOP §1.7–1.8; both are
+  optional and fail-open) — and **confirmed critical (red) alerts**. Candidates, watch alerts,
+  history, and weekly insights live in the local dashboard. A **canvas-only**
+  command (`Run airship-kpi-monitor canvas` / "update canvas only") refreshes
+  that snapshot **without** posting Slack alerts.
 
 ## Muting false positives
 
 A false-positive alert can be **muted**: no longer monitored (never posted to
-Slack) but still **visible and flagged "Muted"** on the Slack canvas, the Cursor
-canvas, and the HTML dashboard. Mute state is permanent until unmuted and lives
+Slack) but still **visible and flagged "Muted"** on the Cursor canvas and the
+HTML dashboard. Confirmed critical alerts that are muted are dropped from the
+Slack canvas. Mute state is permanent until unmuted and lives
 in the per-client `muted_alerts` list in the local `clients.yml` (no secrets).
 Three ways to declare it, all converging on `clients.yml`:
 
@@ -272,8 +272,8 @@ Three ways to declare it, all converging on `clients.yml`:
   directly in **served mode**, or copies the prompt to paste into chat in
   **static** (`file://`) mode.
 - **Prompt**: `Mute airship-kpi-monitor alert "<key>" for project "<project>" (false positive). Reason: <reason>` (and `Unmute …` to reverse).
-- **Slack**: set an alert's **Status** to `Muted` in the per-project KPI canvas
-  Open Alerts table; the skill syncs it into `clients.yml` on the next run.
+- **Slack**: set a shown **critical** alert's **Status** to `Muted` in the
+  per-project canvas; the skill syncs it into `clients.yml` on the next run.
 
 A `muted_alerts` key matches an alert exactly or as a family (the part before
 `:`). See SKILL.md **Muting false positives** for the full behaviour.

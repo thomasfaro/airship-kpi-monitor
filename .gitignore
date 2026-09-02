@@ -8,7 +8,7 @@ clients.yml
 # Local HTML dashboard data — written by the skill each run (no secrets, but
 # contains client routing/state). The dashboard app itself (index.html,
 # styles.css, app.js, dashboard-data.sample.js, thresholds-catalog.js,
-# serve.py, serve.command) IS committed.
+# serve.py, serve.command, service.sh) IS committed.
 /.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js
 
 # Local dashboard server runtime artifacts (optional serve.py — never committed).
@@ -21,6 +21,20 @@ clients.yml
 # Optional bulk-generator secrets (OAuth creds + local airship-mcp path).
 clients.secrets.yml
 *.secrets.yml
+
+# Google Postmaster Tools service-account key (optional email reputation).
+# The recommended location is OUTSIDE the repo entirely
+# (~/.cursor/airship-kpi-monitor/gpt-service-account.json); these patterns are a
+# safety net in case someone drops a key in the working tree.
+*service-account*.json
+gpt-*.json
+
+# SparkPost API key (optional per-provider deliverability). One key covers the
+# whole Airship account, so a leak would expose EVERY client's sending data.
+# Keep it in the env or at ~/.cursor/airship-kpi-monitor/sparkpost-api-key;
+# these patterns are the safety net.
+sparkpost-api-key*
+*sparkpost*key*
 
 # Cursor MCP config (lives in ~/.cursor/mcp.json; only copied here for debugging).
 mcp.json

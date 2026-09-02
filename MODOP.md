@@ -1,6 +1,6 @@
 # MODOP — Airship KPI Monitor Setup Guide for TAMs
 
-> **Audience**: Technical Account Managers setting up the daily KPI monitoring
+> **Audience**: Technical Account Managers setting up the weekly KPI monitoring
 > for a new client.  
 > **Time**: ~15 minutes per client (after the one-time prerequisites).
 
@@ -69,7 +69,10 @@ In the client's Airship project dashboard:
 3. Give it a clear name, e.g. `Cursor KPI Monitor`
 4. Under **Scopes**, enable **only** these two scopes — nothing else:
    - **`rpt`** — Reports (all KPI endpoints: sends, opens, optins, optouts,
-     responses, devices, timeinapp, events, responses/list)
+     responses, devices, timeinapp, responses/list, and
+     `events/summary/perpush/` for per-campaign email volume). The **bulk**
+     `/api/reports/events` endpoint is no longer called, but it shares this
+     scope — nothing to change here.
    - **`tpl`** — Content
 
    Do **not** add other scopes (`psh`, `chn`, `evt`, `nu`, etc.). They are
@@ -240,6 +243,115 @@ cd .cursor/skills/airship-kpi-monitor
 > `clients.secrets.yml`, `mcp.json`, and `mcp.json.bak` are all gitignored —
 > they never leave your machine.
 
+### 1.7 (Optional) Google Postmaster Tools — real Gmail reputation
+
+Without this, email projects still get the skill's own computed **sender score**.
+This step adds the **market reference**: the reputation Gmail actually assigns to
+the client's sending domain.
+
+**Why domain and not IP.** Airship delivers through SparkPost **shared IP
+pools**, so IP-based scores (Validity Sender Score, Microsoft SNDS) grade that
+shared infrastructure — they would return the same value for every client and
+the client could not act on it. Google Postmaster Tools grades the **sending
+domain**, which is client-specific and is what Gmail actually judges.
+
+**Once per TAM workstation:**
+
+1. In a Google Cloud project, enable the **Gmail Postmaster Tools API**.
+2. Create a **service account**, download its JSON key, and save it outside the
+   repo — `~/.cursor/airship-kpi-monitor/gpt-service-account.json`.
+3. Point `clients.yml` at it once, at top level:
+   `postmaster_key_path: ~/.cursor/airship-kpi-monitor/gpt-service-account.json`
+
+**Once per client — this part is done by the CLIENT, they own the domain.** Send
+them the service-account email address and ask them to:
+
+1. Verify their sending domain at <https://postmaster.google.com> (DNS TXT).
+2. Add that service-account email as a **user** on the domain.
+
+You usually do not need to ask them which domain it is — the skill reads
+`sender_address` from an email campaign payload and writes it into `clients.yml`
+itself. Then set `email.postmaster: true` on that client and check the grant:
+
+```bash
+cd .cursor/skills/airship-kpi-monitor
+uv run --with google-auth --with requests scripts/postmaster_reputation.py \
+  --key ~/.cursor/airship-kpi-monitor/gpt-service-account.json --check
+```
+
+It prints the domains the service account can actually read. Expect a delay of a
+day or so after the client grants access before data appears.
+
+> **Know the limits before you show it to a client.** Postmaster Tools covers
+> **Gmail traffic only** — it says nothing about Outlook, Yahoo or corporate MX,
+> which is exactly why the computed sender score stays on the canvas beside it.
+> Data lags 2-3 days, and Google withholds any day where volume to Gmail was too
+> low, so low-volume senders legitimately return nothing.
+
+### 1.8 (Optional) SparkPost — per-provider deliverability and failure reasons
+
+SparkPost is the ESP Airship actually delivers through, so it knows two things
+Airship's Reports API does not: **which mailbox provider** is degrading, and
+**why** mail was delayed or bounced. It turns "12.7% of email delayed" into
+"Gmail is throttling us for unsolicited mail, and it is 56% of our volume" — a
+finding a TAM can act on.
+
+Unlike Postmaster Tools this needs **nothing from the client**: one Airship-owned
+key covers every client at once, and the per-client split comes from filtering on
+the sending domain.
+
+**Once per TAM workstation:**
+
+1. Ask whoever administers the Airship SparkPost account for a **read-only API
+   key** with the **`Metrics: Read`** grant (add `Message Events: Read` if you
+   also want message-level lookups). Note the tenancy: EU accounts live on
+   `api.eu.sparkpost.com`, US on `api.sparkpost.com`. If the client's MX points
+   at `eu.sparkpostmail.com`, it is EU.
+2. Store it **outside the repo** and out of shell history:
+
+```bash
+mkdir -p ~/.cursor/airship-kpi-monitor
+printf '%s' 'PASTE_KEY_HERE' > ~/.cursor/airship-kpi-monitor/sparkpost-api-key
+chmod 600 ~/.cursor/airship-kpi-monitor/sparkpost-api-key
+```
+
+3. Point `clients.yml` at it once, at top level:
+   `sparkpost_key_path: ~/.cursor/airship-kpi-monitor/sparkpost-api-key`
+
+**Check the key and discover the domains:**
+
+```bash
+cd .cursor/skills/airship-kpi-monitor
+uv run --with requests scripts/sparkpost_deliverability.py --check --region eu \
+  --key-file ~/.cursor/airship-kpi-monitor/sparkpost-api-key --days 7
+```
+
+It lists every sending domain with activity in the window. Set `email.sparkpost:
+true` on the clients you want covered; the skill matches the domain it already
+auto-detects from the Airship campaign payload, so you normally set nothing else.
+
+> **One key sees every client in the account.** That is what makes setup easy and
+> what makes a mistake expensive. The script therefore **refuses to run without
+> `--sending-domain`** — an unfiltered call would return Airship-wide aggregates
+> and could put one client's numbers on another's canvas. Never pass the key as a
+> command-line argument either; `ps` is readable by other processes.
+
+**What you cannot get by API — and the way round it.** The SparkPost **Health
+Score** (0–100, the one in the dashboard) has **no public API endpoint**; it is a
+proprietary Signals model. It can still reach you as a *push*: in the SparkPost
+app, create an **Alert** on the `health_score` metric — trigger on an absolute
+value (say below 80), or on a day-over-day / week-over-week drop — filter it by
+the client's **sending domain**, and point it at a **Slack incoming webhook** for
+that client's channel. The skill does not manage these alerts; they land in Slack
+independently of a run.
+
+> Health Score needs **1000+ emails/day with open tracking** to be meaningful, so
+> low-volume projects will not produce a usable one.
+
+> Inbox-vs-spam **placement** metrics exist in the API but require the paid
+> **Deliverability Add-On**. The script deliberately omits them; on accounts
+> without the add-on they return `403`.
+
 ---
 
 ## Part 2 — Register the client (once per client)
@@ -294,6 +406,11 @@ clients:
     time_zone: Europe/Paris              # IANA tz — local day + hourly interpretation
     industry: retail                     # benchmark vertical — auto-deduced from brand_name
     enabled: true
+    # email:                             # optional — only for projects that send email
+    #   sending_domains: [email.client-a.com]   # auto-detected on first run
+    #   sparkpost: true                  # per-provider deliverability + delay/bounce reasons
+    #   sparkpost_subaccount: 42         # optional, narrows further than the domain
+    #   postmaster: true                 # Gmail reputation (needs the client's grant)
     # custom_thresholds:
     #   push_sends_drop_pct: 40
 ```
@@ -333,34 +450,35 @@ Once MCPs are configured (1.5) and clients are registered (2.2), trigger runs
 from Cursor chat with the relevant MCP servers enabled:
 
 - **All clients**:
-  `Run airship-kpi-monitor for all clients in clients.yml using rolling 7-day windows.`
+  `Run airship-kpi-monitor for all clients in clients.yml using rolling 30-day windows.`
 - **A subset**:
   `Run airship-kpi-monitor for Client A and Client B.`
 - **A single client**:
   `Run airship-kpi-monitor for Client A.`
 - **Recurring in an open session** (via the `loop` skill):
-  `/loop 1d Run airship-kpi-monitor for all clients in clients.yml` — runs
-  immediately, then every 24h. Requires Cursor to stay open; uses your local
-  MCP servers (no hosting needed).
+  `/loop 7d Run airship-kpi-monitor for all clients in clients.yml` — runs
+  immediately, then every 7 days. Requires Cursor to stay open; uses your local
+  MCP servers (no hosting needed). Weekly, not daily: on a 30-day window two runs
+  a day apart share 29 days of data, so a daily loop pays for the API calls
+  without learning anything new.
 - **Canvas-only refresh** (Slack canvas, no alert posts):
   `Run airship-kpi-monitor canvas for all clients` (aliases: "update canvas
-  only", "canvas refresh"). Rebuilds each Slack canvas **including** the weekly
-  insight sections (executive recap, global snapshot & benchmark, 3-month trend,
-  top campaigns, unicast) while **skipping** all Slack posts (critical escalations
-  and the weekly recap) and the local views. Pair it
-  with `/loop 7d …` for a dedicated weekly canvas refresh, decoupled from the
-  daily alert run. Use **`alerts-only`** for the symmetrical light daily run that
-  skips the heavy weekly sections.
+  only", "canvas refresh"). Rebuilds each project's **short** Slack canvas
+  (key-metric tables + email block + confirmed critical alerts) while **skipping** all Slack
+  posts (critical escalations and the weekly recap) and the Cursor canvas. Still
+  rewrites `dashboard-data.js` so confirmation streaks persist. Use
+  **`alerts-only`** for the symmetrical light run that skips the heavy
+  weekly insight fetch — handy for an extra run between scheduled ones.
 
-> **Weekly cadence.** The strategic canvas sections (executive recap, global
-> snapshot & benchmark, 3-month trend, top campaigns, unicast) refresh on a
-> **weekly** cadence so daily runs stay
-> fast; `full` runs rebuild them only once the week elapses, `canvas-only` always
-> forces them, and `alerts-only` never builds them.
+> **Weekly cadence.** Step 7b (benchmarks, top campaigns, 3-month history) runs
+> on a **weekly** cadence — it feeds the **weekly
+> recap** and dashboard analysis, **not** the Slack canvas. `full` runs it only
+> once the week elapses; `canvas-only` and `alerts-only` skip it. Since the
+> scheduled cadence is itself weekly, `full` is now the normal scope.
 
 ### 2.4 The local dashboard (your main surface)
 
-Beyond the per-project Slack KPI canvases (the live, shareable source of truth)
+Beyond the per-project Slack KPI canvases (the short client-facing snapshot)
 and the Cursor canvas roll-up beside the chat
 (`~/.cursor/projects/<workspace>/canvases/airship-kpi-monitor.canvas.tsx`, SKILL.md
 Step 12), the **local dashboard** is where you watch runs and manage config.
@@ -368,9 +486,22 @@ Step 12), the **local dashboard** is where you watch runs and manage config.
 **Served mode (recommended) — edit directly.** Run the bundled server and the
 page writes back to `clients.yml` with one click:
 
+- **Always-on (recommended, macOS)**: install the server as a `launchd` user
+  agent once. It starts at login and relaunches automatically whenever it stops,
+  so the page is never down when you open it:
+
+  ```bash
+  cd .cursor/skills/airship-kpi-monitor/dashboard && ./service.sh install
+  ```
+
+  Then `./service.sh status` (loaded? responding?), `restart` (after editing
+  `serve.py`), `logs`, or `uninstall`. It logs to
+  `~/Library/Logs/com.airship.kpi-monitor.dashboard.log`.
 - **Auto-start**: the `.cursor/hooks/start-dashboard.sh` session-start hook
   launches it in the background when you open the workspace (fail-open,
-  idempotent). Open **`http://127.0.0.1:8787`**.
+  idempotent). Open **`http://127.0.0.1:8787`**. Note the server is a child of
+  the Cursor session, so it stops when that session ends — the agent above is
+  the durable option, and the hook no-ops when the agent already holds the port.
 - **Manual**: double-click `.cursor/skills/airship-kpi-monitor/dashboard/serve.command`
   (macOS), or run `uv run --with ruamel.yaml serve.py` in the `dashboard/` folder.
 
@@ -380,7 +511,7 @@ clickable project rows (severity, badges, **worst headroom**, micro-sparkline,
 shareable deep link with browser back). The deep page is the centralized view of
 **every monitored KPI on the project's active channels (healthy ones included)** —
 **one card per KPI family**, with the per-OS breakdown shown inline on the card:
-per-channel **KPI cards** (current vs previous, WoW delta, iOS/Android split,
+per-channel **KPI cards** (current vs previous 30 days, delta, iOS/Android split,
 mini-sparkline history, a **headroom gauge** to the alert threshold, status chip) —
 each card also carries a **one-line, client-contextualized analysis** and exposes
 its **alert threshold inline** (an editable value under the gauge, with Set / Reset
@@ -405,7 +536,7 @@ open .cursor/skills/airship-kpi-monitor/dashboard/index.html
 ```
 
 The app (`index.html`, `styles.css`, `app.js`, `dashboard-data.sample.js`,
-`thresholds-catalog.js`, `serve.py`, `serve.command`) ships with the repo and
+`thresholds-catalog.js`, `serve.py`, `serve.command`, `service.sh`) ships with the repo and
 holds **no client data**; your real data lives in the local, gitignored
 `dashboard-data.js` that the skill writes each run (SKILL.md Step 13). Until your
 first run writes it, the page shows labelled sample data.
@@ -423,9 +554,10 @@ Mutes are **permanent until you unmute** and live in the per-client
 2. **Prompt** in chat:
    - `Mute airship-kpi-monitor alert "<key>" for project "<project>" (false positive). Reason: <reason>`
    - `Unmute airship-kpi-monitor alert "<key>" for project "<project>"`
-3. **Slack** — set an alert's **Status** to `Muted` in the per-project KPI canvas
-   Open Alerts table; the skill honours it and syncs it into `clients.yml` on the
-   next run (not real-time).
+3. **Slack** — set a shown **critical** alert's **Status** to `Muted` in the
+   per-project canvas; the skill honours it and syncs it into `clients.yml` on the
+   next run (not real-time). Watch / candidate mutes are declared from the
+   dashboard or chat.
 
 A key matches exactly or as a **family** (the part before `:`), e.g.
 `email_delay_high` mutes every dated `email_delay_high:{date}`.
@@ -451,8 +583,8 @@ Brand name: {Client's public brand name}
 Airship MCP server: {user-CLIENT-A PROD}
 Slack channel: {cs-fr-client}
 
-Follow SKILL.md (airship-kpi-monitor) to run the daily KPI check
-using rolling 7-day windows.
+Follow SKILL.md (airship-kpi-monitor) to run the KPI check
+using rolling 30-day windows.
 ```
 
 Replace `{...}` with actual values. Press Enter and let the agent run.
@@ -469,9 +601,13 @@ Replace `{...}` with actual values. Press Enter and let the agent run.
   data (no longer the sample banner):
   `open .cursor/skills/airship-kpi-monitor/dashboard/index.html`
 
-> **First run note**: Device delta metrics will show `n/a (canvas history
-> pending)` because the D-7 snapshot does not exist yet. This is expected.
-> After 7 daily runs, full device WoW comparison will be operational.
+> **First run note**: Device *evolution* needs two dated `/api/reports/devices`
+> calls; if only one succeeds, the snapshot still shows and Δ reads "Evolution
+> n/a". Confirmation streaks start empty until the next run, so nothing can be
+> *confirmed* before the second run — at a weekly cadence that means a genuine
+> alert takes about a week to appear in Slack. That is the intended trade for the
+> drop in false positives; the email fast incident checks are the exception and
+> still react within a run.
 
 ---
 
@@ -508,13 +644,17 @@ mirrored in `dashboard/thresholds-catalog.js`, which powers the editor).
 |---|---|---|
 | `401 / 403` errors on Airship API | Wrong OAuth scopes (need exactly `rpt` + `tpl`) or expired credentials | In Airship **Settings → OAuth**, enable only `rpt` and `tpl`; refresh Client ID/Secret in Cursor MCP settings |
 | MCP server stays red | Wrong `uv` path or `airship-mcp` directory | Check `mcp.json` syntax; confirm `uv` and `airship-mcp` path are correct |
-| No Slack message posted | Expected by design — daily alerts live in the dashboard; Slack only gets a throttled critical escalation or the weekly recap | Check the local dashboard and the agent log (`Candidates: … | Confirmed (new): … | Escalations posted: …`) |
+| No Slack message posted | Expected by design — alerts live in the dashboard; Slack only gets a throttled critical escalation or the weekly recap | Check the local dashboard and the agent log (`Candidates: … | Confirmed (new): … | Escalations posted: …`) |
 | Canvas link in alerts is broken | URL missing team ID in path | Build URL as `https://{workspace}.slack.com/docs/{team_id}/{canvas_id}` — see SKILL.md |
 | Canvas not found | Wrong canvas ID in `clients.yml` | Re-run Part 3 to get the correct ID |
-| Device delta shows `n/a` | Less than 7 daily runs completed | Expected — fills automatically after 7 days |
+| Device delta shows `Evolution n/a` | Only one of the two dated `/api/reports/devices` calls succeeded | Expected on a partial run — the absolute snapshot still shows; fills on the next successful run |
+| Far fewer alerts than before the 30-day switch | Intended: the longer window absorbs the campaign-timing noise that used to fire | Check the dashboard *candidates* list. If a metric you care about never fires, tighten its key in `custom_thresholds` — old 7-day values are not comparable |
+| An alert fires while its KPI card looks healthy | The email fast incident checks (spam, delay, deliverability, bounce) evaluate recent **days**, while the card shows the **30-day** figure | Expected — open the card's gauge caption, it says which guard raised it |
 | HTML dashboard shows "sample data" / is empty | No run has written the local `dashboard-data.js` yet | Run the skill once; it writes `.cursor/skills/airship-kpi-monitor/dashboard/dashboard-data.js` (gitignored) |
 | Dashboard badge says "Read-only" / edits only copy prompts | The local server isn't running | Double-click `dashboard/serve.command` or run `uv run --with ruamel.yaml serve.py`, then open `http://127.0.0.1:8787`. Needs `uv`. |
 | Dashboard server won't start | Port 8787 busy, or `uv` missing | Free the port or set `AIRSHIP_KPI_DASHBOARD_PORT`; install `uv` (`brew install uv`). Auto-start is fail-open and just no-ops. |
+| Dashboard is often down when you open it | The server was started by the Cursor session (or a terminal) and dies with it | Install the always-on agent: `cd dashboard && ./service.sh install`. Check with `./service.sh status`. |
+| Agent installed but nothing responds, log is empty | launchd opens the log file **before** exec, with no TCC grant — a log path under `~/Documents`/`~/Desktop`/iCloud Drive is denied and the job dies with `EX_CONFIG` (78) | Already handled: `service.sh` logs to `~/Library/Logs/`. If you customise the plist, keep the log out of protected folders. Inspect with `launchctl print gui/$(id -u)/com.airship.kpi-monitor.dashboard`. |
 
 ---
 

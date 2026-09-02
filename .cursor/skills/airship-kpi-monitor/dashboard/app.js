@@ -79,7 +79,6 @@
     { id: "email", label: "Email" },
     { id: "web", label: "Web push" },
     { id: "sms", label: "SMS" },
-    { id: "custom", label: "Custom events" },
   ];
 
   // --- helpers ---------------------------------------------------------------
@@ -99,18 +98,6 @@
   }
   function channelLink(data, channel) {
     return "https://" + encodeURIComponent(data.slackWorkspace) + ".slack.com/app_redirect?channel=" + encodeURIComponent(channel);
-  }
-  // Trend cell: a plain string renders as text; an array renders as bullets
-  // (used for watch/alert projects so each driver gets its own line).
-  function trendCell(trend) {
-    if (Array.isArray(trend)) {
-      var items = trend.filter(function (t) { return t != null && String(t).trim() !== ""; });
-      if (!items.length) return "\u2014";
-      return '<ul class="trend-list">' + items.map(function (t) {
-        return "<li>" + esc(t) + "</li>";
-      }).join("") + "</ul>";
-    }
-    return esc(trend || "\u2014");
   }
   function worstOf(severities) {
     var w = null;
@@ -150,12 +137,6 @@
     if (m) { try { return { name: "project", project: decodeURIComponent(m[1]) }; } catch (e) { return { name: "project", project: m[1] }; } }
     return { name: "list" };
   }
-  function routeHash(route) {
-    if (!route || route.name === "list") return "#/";
-    if (route.name === "setup") return "#/setup";
-    if (route.name === "project") return "#/project/" + encodeURIComponent(route.project);
-    return "#/";
-  }
   function navTo(hash) {
     if (location.hash === hash) rerender(); else location.hash = hash; // hashchange → rerender
   }
@@ -177,11 +158,6 @@
     if (isNaN(v)) return "\u2014";
     return (Math.round(v * 10) / 10).toString();
   }
-  function fmtSigned(n) {
-    var v = Number(n);
-    if (isNaN(v)) return "\u2014";
-    return (v > 0 ? "+" : "") + fmt1(v);
-  }
   // Compact count formatting (1.24M, 12.3K). Used for volume metrics.
   function fmtCount(n) {
     if (n == null || isNaN(n)) return "\u2014";
@@ -192,16 +168,55 @@
     return String(Math.round(n));
   }
   function trimZeros(s) { return String(s).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1"); }
+  // Adaptive precision for a number whose meaning lives in its decimals. Rounding
+  // a 0.083% block-bounce headroom to one decimal prints "0.083" as "0.1" next to
+  // a "0.1" threshold — a healthy margin rendered as an exhausted one. Scale the
+  // decimals to the magnitude instead, so the small deliverability rates keep the
+  // digits that carry the signal.
+  function fmtPrec(n) {
+    var v = Number(n);
+    if (n == null || isNaN(v)) return "\u2014";
+    var a = Math.abs(v);
+    if (a === 0) return "0";
+    // A rate approaching 100 carries its meaning in the distance from 100, exactly
+    // as a rate near 0 does: 99.973% delivery rounded to "100%" claims a perfection
+    // it has not reached and hides 27 failures per 100,000. Let the complement set
+    // the precision there.
+    var base = a < 1 ? 3 : (a > 99 && a < 100) ? (100 - a < 0.1 ? 3 : 2) : a < 10 ? 2 : 1;
+    var s = trimZeros(v.toFixed(base));
+    // Rounding must never manufacture a whole number out of a measured one: an
+    // open rate of 29.983% printed as "30%" reads as an exact figure and
+    // contradicts the analysis text beside it. Add decimals until the value stops
+    // pretending to be round.
+    if (v % 1 !== 0) {
+      for (var d = base; d <= base + 2 && s.indexOf(".") === -1; d++) s = trimZeros(v.toFixed(d));
+    }
+    return s;
+  }
+  // A run writes `unit: "pct"` on the metric while the thresholds catalog spells
+  // the same unit "%". A renderer that knows only one of the two does not fail
+  // loudly — it falls through to the count formatter, which is how the entire
+  // email family came to print 99.726% as a bare "100". Read units through here.
+  function normUnit(u) {
+    var s = String(u == null ? "" : u).toLowerCase();
+    return (s === "pct" || s === "%" || s === "percent") ? "%" : s;
+  }
   // Value formatting driven by the metric's own unit (the unit of current/previous).
   function fmtVal(v, unit) {
     if (v == null || isNaN(v)) return "\u2014";
-    if (unit === "%") return fmt1(v) + "%";
+    unit = normUnit(unit);
+    if (unit === "%") {
+      // Deliverability rates live near zero (a 0.001% complaint rate is the
+      // healthy case). One decimal would round them all to "0%" and hide the
+      // very signal being monitored, so precision follows the magnitude.
+      return fmtPrec(v) + "%";
+    }
     if (unit === "pts") return fmt1(v) + " pts";
     if (unit === "min") return fmt1(v) + " min";
     if (unit === "x") return (Math.round(v * 100) / 100).toFixed(2) + "x";
     return fmtCount(v);
   }
-  // WoW delta chip. Points (deltaPts) for rate metrics, percent (deltaPct) else.
+  // Window delta chip (30d vs previous 30d). Points (deltaPts) for rate metrics, percent (deltaPct) else.
   function deltaChip(m) {
     var v, u;
     if (typeof m.deltaPts === "number") { v = m.deltaPts; u = " pts"; }
@@ -209,23 +224,174 @@
     else return "";
     var dir = v > 0 ? "up" : v < 0 ? "down" : "flat";
     var arrow = v > 0 ? "\u25B2" : v < 0 ? "\u25BC" : "\u2013";
-    return '<span class="delta delta--' + dir + '">' + arrow + " " + fmt1(Math.abs(v)) + u + "</span>";
+    // A real move on a near-zero rate (0.008% → 0.001% complaints) must not print
+    // as "0 pts"; keep enough decimals for the change to stay visible.
+    var a = Math.abs(v);
+    var txt = a > 0 && a < 0.1 ? trimZeros(a.toFixed(3)) : a > 0 && a < 1 ? trimZeros(a.toFixed(2)) : fmt1(a);
+    return '<span class="delta delta--' + dir + '">' + arrow + " " + txt + u + "</span>";
   }
   var MSTATUS = {
     ok: { t: "OK", c: "ok" },
     candidate: { t: "Watching", c: "cand" },
-    confirmed: { t: "Confirmed", c: "danger" },
-    muted: { t: "Muted", c: "muted" },
+    confirmed: { t: "Alert", c: "danger" },
+    off: { t: "Alerts off", c: "muted" },
+    // Dismissing is the TAM saying "handled" — a false positive, or a threshold
+    // they just adjusted. The card returns to OK rather than staying dimmed, which
+    // read as "disabled". What was dismissed stays legible without the grey: the
+    // Undismiss button remains on the card, the cause line still names the breach,
+    // and the chip's tooltip says the occurrence was acknowledged.
+    dismissed: { t: "OK", c: "ok" },
     na: { t: "n/a", c: "na" },
   };
-  function metricStatus(m) {
-    var s = m.status;
-    if (!s) s = m.threshold && m.threshold.breaching ? "confirmed" : "ok";
-    return MSTATUS[s] || MSTATUS.ok;
+  // A run writes `status: "breach"`; this file's vocabulary is ok/candidate/
+  // confirmed/na. `MSTATUS[s] || MSTATUS.ok` turned every unknown word into a
+  // green "OK", so 22 breaching metrics advertised themselves as healthy. Map the
+  // producer's words explicitly and treat anything still unknown as alerting —
+  // a status we cannot read is not evidence of health.
+  var STATUS_ALIAS = {
+    breach: "confirmed", breaching: "confirmed", alert: "confirmed", alerting: "confirmed",
+    danger: "confirmed", critical: "confirmed", warning: "candidate", watch: "candidate",
+    watching: "candidate", cand: "candidate", muted: "off", disabled: "off",
+    ok: "ok", healthy: "ok", candidate: "candidate", confirmed: "confirmed", na: "na", "n/a": "na",
+  };
+  function normStatus(s) {
+    var k = String(s == null ? "" : s).toLowerCase().trim();
+    if (!k) return "";
+    return STATUS_ALIAS[k] || (MSTATUS[k] ? k : "confirmed");
   }
-  function statusChip(m) {
-    var i = metricStatus(m);
-    return '<span class="mstatus mstatus--' + i.c + '">' + esc(i.t) + "</span>";
+
+  // Volume KPIs whose alerts are raised on a FALL only. A spike in app opens, time
+  // in app or push sends is a campaign, a launch or a news cycle — not a platform
+  // fault, and nothing a TAM can action. Filtering here rather than trusting every
+  // producer keeps the rule true for snapshots written before it existed.
+  var DROP_ONLY_METRICS = { app_opens: 1, timeinapp: 1, time_in_app: 1, push_sends: 1 };
+  function isDropAlertKey(key) { return /_drop(_|$)/.test(String(key || "").toLowerCase()); }
+
+  // The three independent facts behind a card, previously collapsed into one
+  // `status` string:
+  //   off       — the TAM turned this guard off for this client, for good. A
+  //               setting, not a state of the KPI, so it never counts as severity.
+  //   dismissed — the TAM acknowledged THIS occurrence. Keyed on the alert's
+  //               openedAt, so a later re-opening is raised again.
+  //   alerting  — a guard is breaching now.
+  function metricAlertState(p, m) {
+    var alerts = alertsForMetric(p, m);
+    var offMap = mutedMap(p.name, p);
+    var dis = dismissedAlerts(p.name, p);
+    var tKey = (m.threshold && m.threshold.key) || m.key;
+    var off = !!(offMap[tKey] || alerts.some(function (a) { return a.muted; }) ||
+      alerts.some(function (a) { return offMap[a.key]; }));
+    var live = alerts.filter(function (a) { return !a.muted && !offMap[a.key]; });
+    var dismissed = live.filter(function (a) { return isDismissed(dis, a); });
+    var active = live.filter(function (a) { return !isDismissed(dis, a); });
+    var declared = normStatus(m.status);
+    var breaching = !!(m.threshold && m.threshold.breaching);
+    var cands = candidatesForMetric(p, m);
+    // Honour the confirmation gate (SKILL.md Step 8a): a fresh breach is a
+    // CANDIDATE until it has persisted, so a breaching threshold with no confirmed
+    // alert behind it reads "Watching", not "Alert". Both are non-OK, which is the
+    // point — but calling an unconfirmed breach an alert would undo the gate on
+    // screen after the run was careful to apply it.
+    var status;
+    if (declared === "na") status = "na";
+    else if (off) status = "off";
+    else if (active.length) status = "confirmed";
+    else if (dismissed.length) status = "dismissed";
+    else if (cands.length || breaching || declared === "candidate") status = "candidate";
+    else if (declared === "confirmed") status = "confirmed";
+    else status = "ok";
+    var sev = active.length
+      ? (active.some(function (a) { return a.severity === "danger"; }) ? "danger" : "warning")
+      : status === "confirmed" ? "danger" : "warning";
+    return { status: status, sev: sev, off: off, active: active, dismissed: dismissed,
+      candidates: cands, alerts: alerts, breaching: breaching };
+  }
+  // Candidate breaches waiting on the confirmation gate, matched to a metric the
+  // same way alerts are.
+  function candidatesForMetric(p, m) {
+    if (!m || !m.key) return [];
+    var mk = m.key.toLowerCase().replace(/_rate$/, "");
+    var alt = _ALERT_ALT[m.key];
+    var dropOnly = DROP_ONLY_METRICS[m.key];
+    return (p.candidatesList || []).filter(function (a) {
+      if (!a || !a.key) return false;
+      var ak = a.key.toLowerCase();
+      if (ak.indexOf(mk) === -1 && !(alt && ak.indexOf(alt) !== -1)) return false;
+      return dropOnly ? isDropAlertKey(ak) : true;
+    });
+  }
+  // Every metric currently raising an alert, worst first. This is the list both
+  // the project banner and the fleet row are built from, so a dot on the list page
+  // and a row in the banner can never disagree about what is wrong.
+  function alertingMetrics(p) {
+    var out = [];
+    (p.metrics || []).forEach(function (m) {
+      if (!m || !m.key) return;
+      var st = metricAlertState(p, m);
+      // Confirmed only. A candidate is a breach the confirmation gate (SKILL.md
+      // Step 8a) has not yet accepted, so listing it beside real alerts on the
+      // fleet list and the project banner undoes the gate on screen and puts
+      // "watching" rows under a heading that reads as critical. Candidates stay
+      // visible on their own card and in the separate count.
+      if (st.status !== "confirmed") return;
+      out.push({ metric: m, state: st, sev: st.sev });
+    });
+    // Metric keys overlap: `email_unsubscribe` and `email_unsubscribe_rate` both
+    // claim an `email_unsubscribe_rise` alert, which would list one problem twice
+    // and inflate the dot count. Give each alert to the single card whose own
+    // threshold key shares the longest prefix with it, and drop cards left with
+    // nothing of their own.
+    var owner = {};
+    out.forEach(function (e) {
+      var tk = String((e.metric.threshold && e.metric.threshold.key) || e.metric.key).toLowerCase();
+      e.state.active.forEach(function (a) {
+        var ak = String(a.key || "").toLowerCase();
+        var score = 0;
+        while (score < ak.length && score < tk.length && ak[score] === tk[score]) score++;
+        if (!owner[ak] || score > owner[ak].score) owner[ak] = { score: score, key: e.metric.key };
+      });
+    });
+    out = out.filter(function (e) {
+      var mine = e.state.active;
+      if (!mine.length) return true;
+      return mine.some(function (a) {
+        var o = owner[String(a.key || "").toLowerCase()];
+        return !o || o.key === e.metric.key;
+      });
+    });
+    out.sort(function (a, b) {
+      if (a.sev !== b.sev) return a.sev === "danger" ? -1 : 1;
+      return String(a.metric.label || a.metric.key).localeCompare(String(b.metric.label || b.metric.key));
+    });
+    return out;
+  }
+  function metricStatus(p, m) {
+    // Tolerate the legacy one-argument call: metricStatus(m).
+    if (m === undefined) { m = p; p = null; }
+    if (!p) return MSTATUS[normStatus(m.status) || (m.threshold && m.threshold.breaching ? "confirmed" : "ok")] || MSTATUS.ok;
+    return MSTATUS[metricAlertState(p, m).status] || MSTATUS.ok;
+  }
+  function statusChip(p, m) {
+    var st = m === undefined ? metricAlertState(null, p) : metricAlertState(p, m);
+    var i = MSTATUS[st.status] || MSTATUS.ok;
+    var title = st.status === "off" ? "Alerts are turned off for this KPI on this client"
+      : st.status === "dismissed" ? "This occurrence was dismissed; a new one will be raised again"
+      : st.active.length ? st.active.map(function (a) { return a.key; }).join(", ")
+      : "";
+    return '<span class="mstatus mstatus--' + i.c + '"' + (title ? ' title="' + esc(title) + '"' : "") + ">" + esc(i.t) + "</span>";
+  }
+  // The run window is a {current:{start,end},previous:{start,end}} object; older
+  // snapshots stored it as a plain string. Render both without stringifying an
+  // object into "[object Object]".
+  function windowText(w) {
+    if (!w) return "";
+    if (typeof w === "string") return w;
+    var c = w.current || {};
+    var p = w.previous || {};
+    var cur = c.start && c.end ? c.start + " \u2192 " + c.end : "";
+    var prev = p.start && p.end ? p.start + " \u2192 " + p.end : "";
+    if (!cur) return "";
+    return cur + (prev ? " vs " + prev : "");
   }
   // Headroom gauge: fill = distance already travelled toward the breach; a marker
   // sits at the threshold (right edge). headroom is signed (positive = safe margin,
@@ -238,10 +404,25 @@
     frac = Math.max(0, Math.min(1.06, frac));
     var pct = Math.min(100, frac * 100);
     var cls = t.breaching ? "gauge--danger" : (frac >= 0.75 ? "gauge--warning" : "gauge--ok");
-    var u = unit === "pts" ? " pts" : unit === "%" ? "%" : "";
-    var cap = t.breaching
-      ? "Breaching by " + fmtSigned(-H) + u + " \u00B7 threshold " + fmt1(t.value) + u
-      : "Headroom " + fmt1(H) + u + " \u00B7 threshold " + fmt1(t.value) + u + (t.kind ? " (" + esc(t.kind) + ")" : "");
+    var nu = normUnit(unit);
+    var u = nu === "pts" ? " pts" : nu === "%" ? "%" : "";
+    // An alert can be raised by a guard this card does not carry. This is the norm
+    // for the email fast checks (delay, spam, deliverability, bounce): they fire on
+    // recent DAYS while the card shows the 30-day window figure, so a healthy-looking
+    // monthly rate can sit beside an active alert. Same for a rise/collapse guard on
+    // a family whose card carries the drop guard. In
+    // that case `breaching` is true while headroom is still positive — say so
+    // instead of printing a negative breach ("Breaching by -6.8").
+    var otherGuard = t.breaching && H >= 0;
+    var cap;
+    if (otherGuard) {
+      cap = "Alert active \u00B7 this guard still has " + fmtPrec(H) + u + " of headroom (threshold " +
+        fmtPrec(t.value) + u + ") \u2014 raised by another guard";
+    } else if (t.breaching) {
+      cap = "Breaching by " + fmtPrec(-H) + u + " \u00B7 threshold " + fmtPrec(t.value) + u;
+    } else {
+      cap = "Headroom " + fmtPrec(H) + u + " \u00B7 threshold " + fmtPrec(t.value) + u + (t.kind ? " (" + esc(t.kind) + ")" : "");
+    }
     return (
       '<div class="gauge ' + cls + '">' +
         '<div class="gauge__track">' +
@@ -252,11 +433,22 @@
       "</div>"
     );
   }
-  // The metric closest to breaching (smallest headroom) — the project's weakest point.
+  // The metric closest to breaching — the project's weakest point.
+  //
+  // `headroom` is expressed in each metric's OWN unit (%, pts, counts, x) against
+  // thresholds spanning 0.5 to 100, so raw headroom is not comparable across
+  // metrics: a 0.5% click-rate floor sitting on a wide margin would always rank
+  // "worse" than a 100% send-drop guard on a thin one. Rank on the RELATIVE margin
+  // (headroom / |threshold|), which is unit-free and scale-free.
+  function relativeMargin(t) {
+    var T = Math.abs(Number(t.value));
+    if (!isFinite(T) || T === 0) return Number(t.headroom);
+    return Number(t.headroom) / T;
+  }
   function worstHeadroomMetric(p) {
     var ms = (p.metrics || []).filter(function (m) { return m && m.threshold && typeof m.threshold.headroom === "number"; });
     if (!ms.length) return null;
-    ms.sort(function (a, b) { return a.threshold.headroom - b.threshold.headroom; });
+    ms.sort(function (a, b) { return relativeMargin(a.threshold) - relativeMargin(b.threshold); });
     return ms[0];
   }
   function catalogItem(key) {
@@ -287,12 +479,26 @@
     return 'Dismiss airship-kpi-monitor threshold suggestion "' + key + '" for project "' + project +
       '" (do not re-emit it on the next run)';
   }
-  function watchKpiPrompt(project, key, reason) {
-    return 'Watch airship-kpi-monitor KPI "' + key + '" for project "' + project +
-      '". Reason: ' + (reason && String(reason).trim() ? reason : "<why you want to keep an eye on it>");
+  // `watched_alerts` stays the clients.yml key (runs read it back); "context" is
+  // the only word the UI uses for it.
+  function contextPrompt(project, key, reason) {
+    return 'Set airship-kpi-monitor context on KPI "' + key + '" for project "' + project +
+      '" (clients.yml watched_alerts, kept across runs). Context: ' +
+      (reason && String(reason).trim() ? reason : "<what a reader should know about this KPI on this client>");
   }
-  function unwatchKpiPrompt(project, key) {
-    return 'Stop watching airship-kpi-monitor KPI "' + key + '" for project "' + project + '"';
+  function dismissAlertPrompt(project, key) {
+    return 'Dismiss the currently open airship-kpi-monitor alert "' + key + '" for project "' + project +
+      '" (this occurrence only \u2014 add it to clients.yml dismissed_alerts pinned to its openedAt; ' +
+      "a later re-opening must be raised again)";
+  }
+  function undismissAlertPrompt(project, key) {
+    return 'Undismiss the airship-kpi-monitor alert "' + key + '" for project "' + project +
+      '" (remove it from clients.yml dismissed_alerts)';
+  }
+  // Stable in-page anchor so the project banner can link straight to a KPI card.
+  function metricAnchor(m) {
+    return "kpi-" + String((m && (m.key || (m.threshold && m.threshold.key))) || "x")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-");
   }
   function runPrompt() {
     return "Run the airship-kpi-monitor skill for every project in my clients.yml and refresh the local dashboard.";
@@ -396,6 +602,45 @@
     ((c && c.watched_alerts) || []).forEach(add);
     ((p && p.watchedAlerts) || []).forEach(add);
     return out;
+  }
+  // KPIs whose alerts the TAM turned off for this client, for good
+  // (clients.yml `muted_alerts`). Keyed by threshold key AND alert key, because a
+  // guard is muted by its threshold key while the alerts it raises carry
+  // per-OS suffixes.
+  function mutedMap(project, p) {
+    var out = {};
+    function add(w) {
+      if (!w) return;
+      var k = w.key || w;
+      if (k) out[String(k)] = { key: String(k), reason: w.reason || "", since: w.since || w.muted_since || "" };
+    }
+    var c = stateClient(project);
+    ((c && c.muted_alerts) || []).forEach(add);
+    ((p && p.alertsList) || []).forEach(function (a) { if (a && a.muted) add(a); });
+    return out;
+  }
+  // One-shot acknowledgements (clients.yml `dismissed_alerts`). Each entry pins
+  // the occurrence it dismissed via `opened`; when the alert resolves and a new
+  // one opens on a later date the entry no longer matches, so the alert comes
+  // back rather than being silenced for ever. That is the whole difference
+  // between this and turning the guard off.
+  function dismissedAlerts(project, p) {
+    var out = {};
+    function add(w) {
+      if (!w || !w.key) return;
+      out[String(w.key)] = { key: String(w.key), opened: w.opened || "", since: w.since || "", reason: w.reason || "" };
+    }
+    var c = stateClient(project);
+    ((c && c.dismissed_alerts) || []).forEach(add);
+    ((p && p.dismissedAlerts) || []).forEach(add);
+    return out;
+  }
+  function isDismissed(map, a) {
+    if (!a || !a.key) return false;
+    var d = map[a.key];
+    if (!d) return false;
+    // No pinned occurrence (hand-written entry) dismisses whatever is open now.
+    return !d.opened || !a.openedAt || String(d.opened) === String(a.openedAt);
   }
   // Reflect a mute change immediately in the in-memory run data so the Monitor
   // view updates without waiting for the next skill run.
@@ -688,9 +933,6 @@
   // tap / arrow-keys reveal a tooltip (value + date); min & max are marked and
   // the date axis is labelled. The compact tile sparkline is left untouched.
   var CHART_GEO = { W: 860, H: 400, padL: 72, padR: 24, padT: 26, padB: 54 };
-  function chartUnitSuffix(unit) {
-    return unit === "%" ? "%" : unit === "pts" ? " pts" : unit === "min" ? " min" : unit === "x" ? "x" : "";
-  }
   function chartPoints(series) {
     var g = CHART_GEO;
     var vals = series.map(function (s) { return Number(s.v); });
@@ -855,21 +1097,17 @@
   function newChip() {
     return '<span class="age age--new" title="New this run \u2014 not present at the previous run">\uD83C\uDD95 new</span>';
   }
-  // Returns the age affordance for an alert.
-  // Always returns at least an empty <span class="age"> so that subgrid column 4
-  // is always occupied — this keeps the Mute button in column 5 on every row.
+  // Age affordance for one alert: a duration bar once it has survived a run, the
+  // "new" chip on its first, and an empty slot when `openedAt` is unusable — the
+  // slot is always emitted so rows stay aligned.
   function ageAffordance(a, runStr) {
     var openedAt = a.openedAt || a.opened || null;
     if (openedAt) {
       var days = alertAgeDays(openedAt, runStr);
-      if (days != null) {
-        if (days >= 1) return ageGraph(openedAt, runStr, a.severity || "info");
-        return newChip();
-      }
+      if (days != null) return days >= 1 ? ageGraph(openedAt, runStr, a.severity || "info") : newChip();
     }
     return '<span class="age"></span>';
   }
-
   // --- stats -----------------------------------------------------------------
   function computeStats(data) {
     var clients = data.clients || [];
@@ -922,7 +1160,7 @@
           "<div>" +
             '<h1 class="title"><a class="title__link" href="#/"><span class="logo">\uD83D\uDEF0\uFE0F</span>Airship KPI Monitor</a></h1>' +
             '<p class="subtitle">Last run: <strong>' + esc(data.generatedAt || "n/a") + "</strong>" +
-              (data.window ? '<span class="sep">\u2022</span>Window ' + esc(data.window) : "") +
+              (windowText(data.window) ? '<span class="sep">\u2022</span>Window ' + esc(windowText(data.window)) : "") +
             "</p>" +
           "</div>" +
           '<div class="header__right">' +
@@ -1008,7 +1246,7 @@
           stat(st.projectsInAlert, "Projects in alert", st.projectsInAlert > 0 ? "warning" : "") +
           stat(st.openAlerts, "Open alerts", st.openAlerts > 0 ? "danger" : "") +
           stat(st.resolutions, "Resolutions today", st.resolutions > 0 ? "success" : "") +
-          (st.muted > 0 ? stat(st.muted, "Muted (false positives)", "muted") : "") +
+          (st.muted > 0 ? stat(st.muted, "Alerts off", "muted") : "") +
         "</section>"
       )
     );
@@ -1082,66 +1320,6 @@
     );
   }
 
-  function clientAlerts(c) {
-    return (c.projects || []).reduce(function (s, p) {
-      return s + projAlerts(p).count;
-    }, 0);
-  }
-
-  // Per-alert detail with a Mute / Unmute action on each key. `runStr` is the
-  // current run timestamp, used to graph how long each alert has been open.
-  function alertsDetail(project, list, runStr) {
-    if (!list || !list.length) return "";
-    var items = list
-      .map(function (a) {
-        var sev = a.severity && SEV[a.severity] ? a.severity : "info";
-        var muted = !!a.muted;
-        var label = muted
-          ? '<span class="mutedpill">\uD83D\uDD15 Muted</span>'
-          : '<span class="dot dot--' + sev + '" title="' + esc(SEV[sev].label) + '"></span>';
-        var reason = muted && a.reason ? '<span class="alert__reason">' + esc(a.reason) + "</span>" : "";
-        var age = ageAffordance(a, runStr);
-        var btn =
-          '<button class="mutebtn' + (muted ? " mutebtn--unmute" : "") + '" type="button"' +
-          ' data-action="' + (muted ? "unmute" : "mute") + '"' +
-          ' data-project="' + esc(project) + '" data-key="' + esc(a.key) + '"' +
-          ' data-reason="' + esc(a.reason || "") + '">' +
-          (muted ? "Unmute" : "Mute") + "</button>";
-        return (
-          '<li class="alert' + (muted ? " alert--muted" : "") + '">' +
-            label +
-            '<code class="alert__key">' + esc(a.key) + "</code>" +
-            (a.cause && !muted ? '<span class="alert__cause">' + esc(a.cause) + "</span>" : "") +
-            reason +
-            age +
-            btn +
-          "</li>"
-        );
-      })
-      .join("");
-    return '<ul class="alerts">' + items + "</ul>";
-  }
-
-  // Candidate breaches: breaching but not yet confirmed (Step 8a). They live only
-  // in the dashboard — never posted to Slack — with a streak chip (x/N runs).
-  function candidatesDetail(list) {
-    if (!list || !list.length) return "";
-    var items = list
-      .map(function (a) {
-        var sev = a.severity && SEV[a.severity] ? a.severity : "info";
-        var streak = a.streak != null && a.needed != null ? a.streak + "/" + a.needed : a.streak != null ? String(a.streak) : "\u2022";
-        return (
-          '<li class="cand cand--' + sev + '">' +
-            '<span class="cand__streak" title="Consecutive breaching runs / runs needed to confirm">' + esc(streak) + "</span>" +
-            '<code class="alert__key">' + esc(a.key) + "</code>" +
-            (a.cause ? '<span class="alert__cause">' + esc(a.cause) + "</span>" : "") +
-          "</li>"
-        );
-      })
-      .join("");
-    return '<ul class="cands">' + items + "</ul>";
-  }
-
   function thresholdUnit(t) {
     var it = t && t.key ? catalogItem(t.key) : null;
     if (it && it.unit) return it.unit;
@@ -1166,20 +1344,35 @@
   // lives on the deep project page (#/project/<name>), opened by clicking the row.
   function projectBlock(data, c, p) {
     var pa = projAlerts(p);
-    var sev = pa.worst;
     var cands = (p.candidatesList || []).filter(function (a) { return a && a.key; });
 
+    // One dot per KPI actually in alert, each named on hover — a single "3 Critical"
+    // pill said how many but never which, so the row could not be triaged without
+    // opening it. Muted KPIs are deliberately absent: a guard someone turned off is
+    // a setting, not a state of the project, and it has no business competing for
+    // attention here.
+    var alerting = alertingMetrics(p);
+    // Severity follows the dots, so a row can never be painted red while showing
+    // no alert. projAlerts() only sees the snapshot's own `muted` flag, and it
+    // counted candidates the confirmation gate had not accepted.
+    var sev = alerting.length
+      ? (alerting.some(function (a) { return a.sev === "danger"; }) ? "danger" : "warning")
+      : null;
     var badges = "";
-    if (pa.count > 0 && sev) {
-      badges += '<span class="pill ' + SEV[sev].pill + '">' + pa.count + " " + SEV[sev].label + "</span>";
-    } else if (pa.mutedCount === 0 && !cands.length) {
+    if (alerting.length) {
+      badges += '<span class="pdots" title="' + esc(alerting.map(function (a) { return a.metric.label || a.metric.key; }).join(", ")) + '">' +
+        alerting.slice(0, 8).map(function (a) {
+          return '<span class="dot dot--' + a.sev + '" title="' + esc(a.metric.label || a.metric.key) + '"></span>';
+        }).join("") +
+        (alerting.length > 8 ? '<span class="pdots__more">+' + (alerting.length - 8) + "</span>" : "") +
+      "</span>";
+      badges += '<span class="pill ' + SEV[sev || "warning"].pill + '">' + alerting.length +
+        (alerting.length > 1 ? " KPIs in alert" : " KPI in alert") + "</span>";
+    } else if (!cands.length) {
       badges += '<span class="pill pill--ok">\u2713 OK</span>';
     }
     if (cands.length > 0) {
       badges += '<span class="pill pill--cand">\uD83D\uDD0E ' + cands.length + " watching</span>";
-    }
-    if (pa.mutedCount > 0) {
-      badges += '<span class="pill pill--muted">\uD83D\uDD15 ' + pa.mutedCount + " muted</span>";
     }
 
     // Representative micro-trend: worst-headroom metric series, else alert-count bars.
@@ -1218,30 +1411,6 @@
           '<span class="proj__open">Open details \u2192</span>' +
         "</div>" +
       "</article>"
-    );
-  }
-
-  function clientCard(data, c) {
-    var projects = (c.projects || []).slice().sort(function (a, b) {
-      return projAlerts(b).count - projAlerts(a).count ||
-        String(a.name).localeCompare(String(b.name));
-    });
-    var nAlerts = clientAlerts(c);
-    var meta = nAlerts > 0
-      ? nAlerts + " open alert" + (nAlerts > 1 ? "s" : "") + " \u00B7 " + projects.length + " project" + (projects.length > 1 ? "s" : "")
-      : projects.length + " project" + (projects.length > 1 ? "s" : "") + " \u00B7 stable";
-
-    var blocks = projects.map(function (p) { return projectBlock(data, c, p); }).join("");
-
-    return el(
-      '<section class="card" data-client="' + esc((c.name || "").toLowerCase()) + '">' +
-        '<button class="card__head" type="button">' +
-          '<span class="card__caret">\u25BC</span>' +
-          '<span class="card__name">' + esc(c.name) + "</span>" +
-          '<span class="card__meta">' + esc(meta) + "</span>" +
-        "</button>" +
-        '<div class="card__body">' + blocks + "</div>" +
-      "</section>"
     );
   }
 
@@ -1301,8 +1470,13 @@
   // --- deep project page (#/project/<name>) ----------------------------------
   function renderProject(root, data, c, p) {
     var pa = projAlerts(p);
-    var sev = pa.worst;
     var cands = (p.candidatesList || []).filter(function (a) { return a && a.key; });
+    // Confirmed alerts only — the header pill, the banner and the fleet dots all
+    // read from this one list so they cannot disagree.
+    var alerting = alertingMetrics(p);
+    var sev = alerting.length
+      ? (alerting.some(function (a) { return a.sev === "danger"; }) ? "danger" : "warning")
+      : null;
     var resolved = (data.resolvedRecently || []).filter(function (r) {
       return String(r.project || "").trim().toLowerCase() === String(p.name).trim().toLowerCase();
     });
@@ -1310,8 +1484,8 @@
     root.appendChild(breadcrumb(esc(p.name)));
 
     // Header
-    var sevPill = pa.count > 0 && sev
-      ? '<span class="pill ' + SEV[sev].pill + '">' + pa.count + " " + SEV[sev].label + "</span>"
+    var sevPill = alerting.length && sev
+      ? '<span class="pill ' + SEV[sev].pill + '">' + alerting.length + " " + SEV[sev].label + "</span>"
       : (cands.length ? '<span class="pill pill--cand">\uD83D\uDD0E ' + cands.length + " watching</span>" : '<span class="pill pill--ok">\u2713 Stable</span>');
     var ind = projIndustry(p);
     var indBtn = '<button class="linkbtn indbtn" type="button" data-project="' + esc(p.name) + '" data-industry="' + esc(ind) +
@@ -1344,29 +1518,525 @@
       );
     }
 
-    // At-a-glance tiles
+    // What needs attention, named. The banner used to lead with "breaching" and a
+    // set of counts, which said how many things were wrong but never which — the
+    // reader still had to hunt down the page. Lead with the KPIs themselves, each
+    // one a link to its card; keep the counts as a quiet second line.
     var wh = worstHeadroomMetric(p);
-    var whTxt = wh ? (wh.threshold.breaching ? "breaching" : fmt1(wh.threshold.headroom) + (thresholdUnit(wh.threshold) === "pts" ? " pts" : thresholdUnit(wh.threshold) === "%" ? "%" : "")) : "\u2014";
+    var rows = alerting.map(function (a) {
+      var m = a.metric;
+      var cause = a.state.active[0] || {};
+      // How long this has been open, as the documented age bar rather than a bare
+      // date. The exact openedAt stays in its tooltip.
+      var since = cause.openedAt
+        ? '<span class="alertboard__since">' + ageAffordance(cause, data.generatedAt) + "</span>"
+        : "";
+      var why = cause.cause || cause.note || (m.threshold && m.threshold.breaching
+        ? "past its " + esc(String(m.threshold.kind || "threshold")) + " of " + fmtPrec(m.threshold.value) : "");
+      // A button, not a link: the router owns the hash (`#/project/<name>`), so an
+      // `href="#kpi-…"` parsed as an unknown route and bounced back to the fleet
+      // list. Scrolling to a card on the page we are already on is an in-page
+      // action, not navigation.
+      return '<button type="button" class="alertboard__row alertboard__row--' + a.sev +
+        '" data-nonav data-goto="' + esc(metricAnchor(m)) + '">' +
+        '<span class="dot dot--' + a.sev + '"></span>' +
+        '<span class="alertboard__kpi">' + esc(m.label || m.key) + "</span>" +
+        '<span class="alertboard__why">' + esc(String(why || "").slice(0, 140)) + "</span>" +
+        since +
+      "</button>";
+    }).join("");
+
+    var counts = '<div class="alertboard__counts">' +
+      '<span class="alertboard__count' + (alerting.length ? " is-hot" : "") + '">' + alerting.length + " in alert</span>" +
+      '<span class="alertboard__count">' + cands.length + " watching</span>" +
+      '<span class="alertboard__count">' + resolved.length + " resolved recently</span>" +
+      (wh ? '<span class="alertboard__count">worst headroom \u00B7 ' + esc(wh.label) + "</span>" : "") +
+    "</div>";
+
     root.appendChild(
       el(
-        '<section class="glance">' +
-          stat(pa.count, "Open alerts", pa.count > 0 ? "danger" : "") +
-          stat(cands.length, "Watching", cands.length > 0 ? "warning" : "") +
-          stat(pa.mutedCount, "Muted", pa.mutedCount > 0 ? "muted" : "") +
-          stat(resolved.length, "Resolved recently", resolved.length > 0 ? "success" : "") +
-          '<div class="stat stat--wide' + (wh && wh.threshold.breaching ? " stat--danger" : "") + '">' +
-            '<div class="stat__value">' + esc(whTxt) + "</div>" +
-            '<div class="stat__label">Worst headroom' + (wh ? " \u00B7 " + esc(wh.label) : "") + "</div>" +
+        '<section class="alertboard' + (alerting.length ? " alertboard--hot" : " alertboard--clear") + '">' +
+          '<div class="alertboard__head">' +
+            '<h3 class="alertboard__title">' +
+              (alerting.length ? "Needs attention" : "\u2713 No open alerts") + "</h3>" +
+            counts +
           "</div>" +
+          (rows ? '<div class="alertboard__list">' + rows + "</div>" : "") +
         "</section>"
       )
     );
 
-    // KPI panels by channel
+    // KPI panels by channel. The SparkPost drill-down is folded INTO the email
+    // panel rather than sitting in a section of its own — see kpiPanels.
     root.appendChild(kpiPanels(p));
 
     // Thresholds & suggestions
     root.appendChild(thresholdsPanel(p));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email deliverability (SparkPost, SKILL.md Step 3e)
+  //
+  // Airship reports email totals but not WHERE mail lands or WHY it failed. This
+  // panel adds the missing axis: per-mailbox-provider rates plus the reason
+  // strings remote servers actually returned. It is the diagnosis surface — the
+  // Slack canvas deliberately stays synthetic and points here.
+  // ---------------------------------------------------------------------------
+
+  // Thresholds for colouring a rate cell. Deliberately stricter than the alerting
+  // thresholds: this is a reading aid for a human scanning a table, not an alert.
+  var DLV_BANDS = {
+    delivery: { good: 99, warn: 95, higherIsBetter: true },
+    open: { good: 25, warn: 10, higherIsBetter: true },
+    delay: { good: 2, warn: 10, higherIsBetter: false },
+    bounce: { good: 1, warn: 2, higherIsBetter: false },
+    spam: { good: 0.02, warn: 0.1, higherIsBetter: false },
+    ctor: { good: 10, warn: 3, higherIsBetter: true },
+  };
+
+  // ---------------------------------------------------------------------------
+  // Per-sending-domain email breakdown
+  //
+  // The project rollup is recombined from raw counts, which is correct but hides
+  // the small domain in trouble. This table restores it: one row per declared
+  // domain with its own score, its own rates, and how much of its volume rides
+  // shared IPs — a client on a shared pool inherits its neighbours' reputation
+  // and no figure of its own will ever explain why.
+  // ---------------------------------------------------------------------------
+  function scoreTone(s) {
+    if (s === null || s === undefined) return "";
+    return s >= 90 ? "ok" : s >= 60 ? "warn" : "bad";
+  }
+
+  // The sender score measures ACCEPTANCE — whether the receiver took the mail.
+  // It is blind to PLACEMENT, i.e. inbox vs spam folder, which no API reports
+  // without the paid add-on. Client Alpha is why the two are shown side by side: 100/100
+  // on acceptance while it lost 21.8 points of open rate with its IP suspended.
+  var RISK_LABEL = { high: "at risk", watch: "watch", none: "clear", na: "na" };
+  function riskChip(risk) {
+    if (!risk || !risk.level) return '<span class="dlv-risk dlv-risk--na">na</span>';
+    var reasons = (risk.reasons || []).join("\n");
+    return '<span class="dlv-risk dlv-risk--' + risk.level + '"' +
+      (reasons ? ' title="' + esc(reasons) + '"' : "") + ">" +
+      (RISK_LABEL[risk.level] || risk.level) + "</span>";
+  }
+
+  function decorateEmailDomains(sec, p) {
+    var doms = p.emailDomains || [];
+    if (!doms.length) return;
+    var sum = p.emailSummary || {};
+
+    var rows = doms.map(function (d) {
+      var r = d.rates || {};
+      var exp = d.ipExposure || {};
+      if (!d.active) {
+        return '<tr class="dlv-idle"><td class="dlv-prov">' + esc(d.domain) + "</td>" +
+          '<td colspan="8">configured on SparkPost, no traffic in the window \u2014 <code>na</code>, not healthy</td></tr>';
+      }
+      // A shared IP is not automatically worse: Client Delta's shared IPs deliver at ~97%
+      // while its own dedicated IP delivers at 35.8%. The cell states exposure,
+      // it does not pass judgement.
+      var shared = (d.sendingIps || []).filter(function (i) { return i.shared; });
+      var ipCell = exp.shared_ip_count
+        ? '<span class="dlv-ip dlv-ip--shared" title="' +
+            esc(shared.map(function (i) {
+              return i.ip + " \u2192 " + (i.coTenants || []).slice(0, 8).join(", ");
+            }).join(" | ")) + '">' + fmt1(exp.shared_volume_pct) + "% shared \u00B7 \u2264" +
+            exp.worst_co_tenant_count + " co-tenants</span>"
+        : '<span class="dlv-ip">dedicated \u00B7 ' + (exp.ip_count || 0) + " IP</span>";
+      return "<tr>" +
+        '<td class="dlv-prov">' + esc(d.domain) + "</td>" +
+        '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(r.injected)) + "</td>" +
+        '<td class="dlv-num dlv-score dlv-num--' + scoreTone(d.senderScore) + '">' +
+          (d.senderScore == null ? "na" : d.senderScore) + "</td>" +
+        "<td>" + riskChip(d.placementRisk) + "</td>" +
+        dlvCell("delivery", r.delivery_rate, 2) +
+        dlvCell("bounce", r.bounce_rate, 2) +
+        dlvCell("delay", r.delay_rate, 2) +
+        dlvCell("spam", r.spam_complaint_rate, 3) +
+        dlvCell("open", r.open_rate, 1) +
+        "<td>" + ipCell + "</td>" +
+      "</tr>";
+    }).join("");
+
+    var lead =
+      "<strong>" + doms.length + " sending domain" + (doms.length > 1 ? "s" : "") + "</strong>" +
+      (sum.activeDomainCount != null && sum.activeDomainCount !== doms.length
+        ? " \u00B7 " + sum.activeDomainCount + " active in the window" : "") +
+      (sum.senderScore != null
+        ? ' \u00B7 project sender score <strong class="dlv-num--' + scoreTone(sum.senderScore) + '">' +
+          sum.senderScore + "/100</strong> (" + esc(sum.senderGrade || "") + ")" : "") +
+      (sum.sharedIpVolumePct ? " \u00B7 " + fmt1(sum.sharedIpVolumePct) + "% of volume on shared IPs" : "");
+
+    var risk = sum.placementRisk || {};
+    var riskNote = risk.level && risk.level !== "none" && risk.level !== "na"
+      ? '<p class="dlv-riskline dlv-riskline--' + risk.level + '">' +
+          "<strong>Placement " + esc(RISK_LABEL[risk.level] || risk.level) + "</strong>" +
+          (risk.domain ? " on <code>" + esc(risk.domain) + "</code>" : "") + " \u2014 " +
+          esc((risk.reasons || []).join(" ")) + "</p>"
+      : "";
+
+    sec.appendChild(el(
+      '<section class="panel dlv-panel dlv-panel--domains">' +
+        "<h3>By sending domain</h3>" +
+        '<p class="dlv-lead">' + lead + "</p>" +
+        riskNote +
+        '<p class="dlv-hint">Project rates are recombined from raw counts, never averaged across ' +
+        "domains \u2014 a domain carrying 2% of the volume cannot move the headline, which is exactly " +
+        "why it needs its own row. <strong>Score</strong> grades acceptance (was the mail taken); " +
+        "<strong>Placement</strong> flags the inbox-vs-spam risk the score cannot see. " +
+        "Source: SparkPost Metrics API.</p>" +
+        '<div class="dlv-tblwrap"><table class="dlv-tbl">' +
+          "<thead><tr><th>Domain</th><th>Injected</th><th>Score</th><th>Placement</th><th>Deliv.</th>" +
+          "<th>Bounce</th><th>Delay</th><th>Spam</th><th>Open</th><th>IP exposure</th></tr></thead>" +
+          "<tbody>" + rows + "</tbody></table></div>" +
+      "</section>"
+    ));
+
+    // One drill-down per domain, collapsed. Open the first by default: a page
+    // where everything is collapsed reads as though there were nothing to see.
+    doms.forEach(function (d, i) {
+      if (!d.active || !d.deliverability) return;
+      sec.appendChild(domainDrilldown(d, i === 0));
+    });
+  }
+
+  // Bounce composition, engagement quality and the verbatim MTA strings, for ONE
+  // sending domain. Split by axis because each answers a different question:
+  // provider = who is judging us, receiving domain = which inbox, reason = why.
+  function domainDrilldown(d, open) {
+    var dv = d.deliverability;
+    var r = d.rates || {};
+
+    var findings = (dv.findings || []).map(function (f) {
+      var sev = /^(danger|warning|success)$/.test(f.severity) ? f.severity : "info";
+      return '<div class="dlv-find dlv-find--' + sev + '">' +
+        '<div class="dlv-find__title">' + esc(f.title) + "</div>" +
+        (f.detail ? '<div class="dlv-find__body">' + esc(f.detail) + "</div>" : "") + "</div>";
+    }).join("");
+
+    // Bounce composition deserves its own line: 0.93% total means one thing when
+    // it is invalid addresses and another when it is full mailboxes.
+    var comp = '<p class="dlv-hint">Bounce composition \u2014 <strong>' + dlvPct(r.bounce_rate, 2) +
+      "</strong> total: " + dlvPct(r.hard_bounce_rate, 3) + " hard (invalid address, list quality) \u00B7 " +
+      dlvPct(r.soft_bounce_rate, 3) + " soft (temporary, usually a full mailbox) \u00B7 " +
+      dlvPct(r.block_bounce_rate, 3) + " block (refused on reputation) \u00B7 " +
+      dlvPct(r.admin_bounce_rate, 3) + " admin. " +
+      "Engagement \u2014 " + dlvPct(r.open_rate, 1) + " open, " + dlvPct(r.click_rate, 2) +
+      " click, <strong>" + dlvPct(r.ctor, 2) + " click-to-open</strong> (the signal Apple MPP cannot inflate). " +
+      "Delivery \u2014 " + dlvPct(r.first_attempt_delivery_rate, 1) + " landed on the first attempt, " +
+      (r.delay_retries_per_delivered == null ? "\u2014" : r.delay_retries_per_delivered) +
+      " retries per delivered message.</p>";
+
+    function sliceTable(title, rows, note) {
+      if (!rows || !rows.length) return "";
+      var body = rows.slice(0, 12).map(function (x) {
+        return "<tr>" +
+          '<td class="dlv-prov">' + esc(x.name || "\u2014") + "</td>" +
+          '<td class="dlv-share">' + dlvBar(x.share) + '<span class="dlv-share__txt">' + dlvPct(x.share, 1) + "</span></td>" +
+          '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(x.injected)) + "</td>" +
+          dlvCell("delivery", x.deliveryRate, 2) +
+          dlvCell("bounce", x.bounceRate, 2) +
+          dlvCell("bounce", x.hardBounceRate, 3) +
+          dlvCell("delay", x.delayRate, 2) +
+          dlvCell("spam", x.spamRate, 3) +
+          dlvCell("open", x.openRate, 1) +
+          dlvCell("ctor", x.ctor, 2) +
+        "</tr>";
+      }).join("");
+      return '<section class="panel dlv-panel"><h3>' + esc(title) + "</h3>" +
+        (note ? '<p class="dlv-hint">' + note + "</p>" : "") +
+        '<div class="dlv-tblwrap"><table class="dlv-tbl"><thead><tr>' +
+        "<th>" + (title.indexOf("provider") > -1 ? "Provider" : "Receiving domain") + "</th><th>Share</th>" +
+        "<th>Volume</th><th>Deliv.</th><th>Bounce</th><th>Hard</th><th>Delay</th><th>Spam</th>" +
+        "<th>Open</th><th>CTOR</th></tr></thead><tbody>" + body + "</tbody></table></div></section>";
+    }
+
+    function reasonTable(title, rows, note) {
+      if (!rows || !rows.length) return "";
+      // Delay rows carry our own classification (`label`), bounce rows carry
+      // SparkPost's (`className`). Either way the column answers "what kind".
+      var hasClass = rows.some(function (x) { return x.className || x.label; });
+      var body = rows.slice(0, 10).map(function (x) {
+        var cls = x.className || x.label;
+        return "<tr>" +
+          '<td class="dlv-prov">' + esc(x.domain || "\u2014") + "</td>" +
+          '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(x.count)) + "</td>" +
+          (hasClass
+            ? '<td class="dlv-bclass">' + (cls
+                ? '<span class="dlv-dcls dlv-dcls--' + (x.severity || "info") + '">' + esc(cls) + "</span>"
+                : "\u2014") + "</td>"
+            : "") +
+          "<td>" + dlvReason(x.reason) + "</td></tr>";
+      }).join("");
+      return '<section class="panel dlv-panel"><h3>' + esc(title) + "</h3>" +
+        (note ? '<p class="dlv-hint">' + note + "</p>" : "") +
+        '<div class="dlv-tblwrap"><table class="dlv-tbl"><thead><tr><th>Receiving domain</th>' +
+        "<th>Count</th>" + (hasClass ? '<th class="dlv-bclass">Class</th>' : "") +
+        "<th>Reason returned by the remote server</th></tr></thead><tbody>" +
+        body + "</tbody></table></div></section>";
+    }
+
+    // A single delay rate hides three unrelated problems. Splitting the
+    // deferrals by what the receiver actually said is what makes it readable:
+    // Client Alpha reads 82% "sending IP suspended", Client Bravo 65% "mailbox full".
+    var defCls = (dv.deferralClasses || []).filter(function (c) { return c.count; });
+    var deferralPanel = defCls.length
+      ? '<section class="panel dlv-panel"><h3>What the deferrals actually were</h3>' +
+        '<p class="dlv-hint">Every deferral string grouped by cause. A full mailbox costs retries and ' +
+        "nothing else; a reputation string or a suspended IP is a different problem with a different fix. " +
+        "The delay rate on its own cannot tell them apart.</p>" +
+        '<div class="dlv-tblwrap"><table class="dlv-tbl"><thead><tr><th>Cause</th><th>Share</th>' +
+        "<th>Messages</th><th>Receivers</th><th>What it means</th></tr></thead><tbody>" +
+        defCls.map(function (c) {
+          return "<tr>" +
+            '<td class="dlv-prov"><span class="dlv-dcls dlv-dcls--' + (c.severity || "info") + '">' +
+              esc(c.label) + "</span></td>" +
+            '<td class="dlv-share">' + dlvBar(c.share) + '<span class="dlv-share__txt">' +
+              dlvPct(c.share, 1) + "</span></td>" +
+            '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(c.count)) + "</td>" +
+            '<td class="dlv-cls">' + esc((c.domains || []).slice(0, 4).join(", ")) + "</td>" +
+            '<td class="dlv-cls">' + esc(c.meaning || "") + "</td></tr>";
+        }).join("") + "</tbody></table></div></section>"
+      : "";
+
+    var classes = (dv.bounceClasses || []).filter(function (c) { return c.count; });
+    var classTable = classes.length
+      ? '<section class="panel dlv-panel"><h3>Bounce classification</h3>' +
+        '<p class="dlv-hint">SparkPost\u2019s own classification. Hard means the address does not exist ' +
+        "(clean the list); Soft is temporary (wait, then age the address out); Block means the receiver " +
+        "refused on policy (a reputation problem no list change fixes).</p>" +
+        '<div class="dlv-tblwrap"><table class="dlv-tbl"><thead><tr><th>Class</th><th>Category</th>' +
+        "<th>Count</th><th>Share</th><th>What it means</th></tr></thead><tbody>" +
+        classes.slice(0, 10).map(function (c) {
+          return "<tr>" +
+            '<td class="dlv-prov">' + esc(c.name || "\u2014") + "</td>" +
+            "<td>" + esc(c.category || "\u2014") + "</td>" +
+            '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(c.count)) + "</td>" +
+            '<td class="dlv-num dlv-num--plain">' + dlvPct(c.share, 1) + "</td>" +
+            '<td class="dlv-cls">' + esc(c.description || "") + "</td></tr>";
+        }).join("") + "</tbody></table></div></section>"
+      : "";
+
+    var wrap = el(
+      "<details class=\"dlv-dd\"" + (open ? " open" : "") + ">" +
+        '<summary class="dlv-dd__sum"><code class="dlv-dom">' + esc(d.domain) + "</code>" +
+          '<span class="dlv-dd__hint">deliverability detail \u2014 providers, receiving domains, reasons</span>' +
+        "</summary>" +
+        '<div class="dlv-dd__body">' +
+          (findings ? '<div class="dlv__findings">' + findings + "</div>" : "") +
+          comp +
+          sliceTable("By mailbox provider",
+            dv.providers,
+            "Who is judging this domain. A rate that is fine overall but bad at one provider is a " +
+            "reputation problem with that provider, not a list problem.") +
+          sliceTable("By receiving domain",
+            dv.receivingDomains,
+            "Finer than the provider bucket \u2014 it separates hotmail.fr from outlook.fr, and " +
+            "isolates the single inbox domain that can carry an entire bounce rate.") +
+          deferralPanel +
+          reasonTable("Why messages were delayed", dv.delayReasons,
+            "The remote server\u2019s own words, verbatim. A 4.7.x string naming unsolicited mail or an " +
+            "unusual rate is a reputation warning; a full-mailbox string is not.") +
+          reasonTable("Why messages bounced", dv.bounceReasons,
+            "Verbatim refusal strings, per receiving domain.") +
+          classTable +
+        "</div>" +
+      "</details>"
+    );
+    return wrap;
+  }
+
+  function dlvTone(kind, v) {
+    var b = DLV_BANDS[kind];
+    if (!b || v === null || v === undefined || isNaN(v)) return "";
+    if (b.higherIsBetter) return v >= b.good ? "ok" : v >= b.warn ? "warn" : "bad";
+    return v <= b.good ? "ok" : v <= b.warn ? "warn" : "bad";
+  }
+
+  // Percentages in the per-domain tables are read down a column, so they keep the
+  // decimals they were asked for rather than being trimmed: a 98.00% delivery rate
+  // shortened to "98%" reads as a coarser measurement than the "99.97%" beside it.
+  // Only an exact zero collapses, because there the absence is the whole message.
+  function dlvPct(v, digits) {
+    if (v === null || v === undefined || isNaN(v)) return "\u2014";
+    var n = Number(v);
+    if (n === 0) return "0%";
+    var d = digits === undefined ? 2 : digits;
+    // Same boundary guard as fmtPrec: a delivery rate below 100 must never print
+    // as "100%", so a value that would round onto the ceiling gains a decimal.
+    if (n > 99 && n < 100 && Number(n.toFixed(d)) >= 100) d = 3;
+    return n.toFixed(d) + "%";
+  }
+
+  function dlvCell(kind, v, digits) {
+    var tone = dlvTone(kind, v);
+    return '<td class="dlv-num' + (tone ? " dlv-num--" + tone : "") + '">' + dlvPct(v, digits) + "</td>";
+  }
+
+  // A reason string is a raw SMTP response: long, often multi-line, and the useful
+  // part is at the front. Keep the full text in a title attribute so nothing is lost.
+  function dlvReason(s) {
+    var raw = String(s || "").replace(/\\r\\n|\r\n|\r|\n/g, " ").replace(/\s+/g, " ").trim();
+    var short = raw.length > 110 ? raw.slice(0, 110).replace(/\s+\S*$/, "") + "\u2026" : raw;
+    return '<code class="dlv-reason" title="' + esc(raw) + '">' + esc(short || "\u2014") + "</code>";
+  }
+
+  function dlvBar(share) {
+    var w = Math.max(0, Math.min(100, Number(share) || 0));
+    return '<span class="dlv-bar"><span class="dlv-bar__fill" style="width:' + w.toFixed(1) + '%"></span></span>';
+  }
+
+  // Fold the SparkPost drill-down into the email KPI panel: findings between the
+  // panel header and the cards, provider/reason detail after them. The account
+  // totals are deliberately NOT rendered as tiles — every one of them already has
+  // a KPI card above, where it is shown beside its Airship counterpart.
+  function decorateEmailPanel(sec, d) {
+    var findings = (d.findings || []).filter(function (x) { return x && x.title; });
+    var cardsHost = sec.querySelector(".kpanel__cards");
+    var head = sec.querySelector(".kpanel__head");
+
+    if (d.sendingDomain || d.window) {
+      var meta = [];
+      if (d.sendingDomain) meta.push('<code class="dlv-dom">' + esc(d.sendingDomain) + "</code>");
+      if (d.window) meta.push('<span class="dlv-win">' + esc(d.window) + "</span>");
+      head.appendChild(el('<span class="dlv__meta">' + meta.join("") + "</span>"));
+    }
+
+    // The diagnosis goes first — it is what a TAM opens the page for.
+    if (findings.length) {
+      sec.insertBefore(
+        el(
+          '<div class="dlv__findings">' +
+            findings
+              .map(function (f) {
+                var sev = f.severity === "danger" || f.severity === "warning" || f.severity === "success" ? f.severity : "info";
+                return (
+                  '<div class="dlv-find dlv-find--' + sev + '">' +
+                    '<div class="dlv-find__title">' + esc(f.title) + "</div>" +
+                    (f.detail ? '<div class="dlv-find__body">' + esc(f.detail) + "</div>" : "") +
+                  "</div>"
+                );
+              })
+              .join("") +
+          "</div>"
+        ),
+        cardsHost
+      );
+    }
+
+    var tail = dlvDetail(d);
+    if (tail) sec.appendChild(tail);
+  }
+
+  function dlvDetail(d) {
+    var providers = (d.providers || []).filter(function (x) { return x && x.name; });
+    var delays = (d.delayReasons || []).filter(function (x) { return x && x.reason; });
+    var bounces = (d.bounceClasses || []).filter(function (x) { return x && x.name; });
+    if (!providers.length && !delays.length && !bounces.length) return null;
+
+    var host = el('<div class="dlv__body"></div>');
+
+    // Per-provider table — the axis Airship cannot give at all.
+    if (providers.length) {
+      var rows = providers
+        .map(function (pr) {
+          return (
+            "<tr>" +
+              '<td class="dlv-prov">' + esc(pr.name) + "</td>" +
+              '<td class="dlv-share">' + dlvBar(pr.share) + '<span class="dlv-share__txt">' + dlvPct(pr.share, 1) + "</span></td>" +
+              '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(pr.injected)) + "</td>" +
+              dlvCell("delivery", pr.deliveryRate, 2) +
+              dlvCell("delay", pr.delayRate, 2) +
+              dlvCell("bounce", pr.bounceRate, 2) +
+              dlvCell("open", pr.openRate, 1) +
+            "</tr>"
+          );
+        })
+        .join("");
+      host.appendChild(
+        el(
+          '<section class="panel dlv-panel">' +
+            "<h3>By mailbox provider</h3>" +
+            '<div class="dlv-tblwrap"><table class="dlv-tbl">' +
+              "<thead><tr>" +
+                "<th>Mailbox provider</th><th>Share of volume</th><th>Injected</th>" +
+                "<th>Delivered</th><th>Delayed</th><th>Bounced</th><th>Opened</th>" +
+              "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+          "</section>"
+        )
+      );
+    }
+
+    // 4. Reasons, side by side — the "why".
+    var cols = "";
+    if (delays.length) {
+      cols +=
+        '<section class="panel dlv-panel">' +
+          "<h3>Why mail is delayed</h3>" +
+          '<ul class="dlv-reasons">' +
+            delays
+              .map(function (r) {
+                return (
+                  '<li class="dlv-reasons__item">' +
+                    '<div class="dlv-reasons__head"><span class="dlv-reasons__dom">' + esc(r.domain || "\u2014") + "</span>" +
+                      '<span class="dlv-reasons__n">' + esc(fmtCount(r.count)) + "</span></div>" +
+                    dlvReason(r.reason) +
+                  "</li>"
+                );
+              })
+              .join("") +
+          "</ul>" +
+        "</section>";
+    }
+    if (bounces.length) {
+      var maxB = bounces.reduce(function (a, b) { return Math.max(a, Number(b.count) || 0); }, 0) || 1;
+      cols +=
+        '<section class="panel dlv-panel">' +
+          "<h3>Why mail bounces</h3>" +
+          '<ul class="dlv-classes">' +
+            bounces
+              .map(function (b) {
+                var pctW = ((Number(b.count) || 0) / maxB) * 100;
+                var cat = String(b.category || "").toLowerCase();
+                var tone = cat === "hard" || cat === "block" ? "bad" : cat === "soft" ? "warn" : "";
+                return (
+                  '<li class="dlv-classes__item">' +
+                    '<div class="dlv-classes__head">' +
+                      '<span class="dlv-classes__name">' + esc(b.name) + "</span>" +
+                      (b.category ? '<span class="dlv-cat' + (tone ? " dlv-cat--" + tone : "") + '">' + esc(b.category) + "</span>" : "") +
+                      '<span class="dlv-classes__n">' + esc(fmtCount(b.count)) + "</span>" +
+                    "</div>" +
+                    '<span class="dlv-bar"><span class="dlv-bar__fill" style="width:' + pctW.toFixed(1) + '%"></span></span>' +
+                  "</li>"
+                );
+              })
+              .join("") +
+          "</ul>" +
+        "</section>";
+    }
+    if (cols) host.appendChild(el('<div class="dlv__cols">' + cols + "</div>"));
+
+    // Provenance, so any number on this page can be traced back.
+    var srcBits = [];
+    srcBits.push(esc(d.source || "SparkPost Metrics API"));
+    if (d.sendingDomain) srcBits.push("scoped to " + esc(d.sendingDomain));
+    if (d.window) srcBits.push(esc(d.window));
+    if (d.fetchedAt) srcBits.push("fetched " + esc(d.fetchedAt));
+    var gm = d.gmailReputation;
+    var gmTxt = gm && gm.reputation
+      ? "Gmail domain reputation: <strong>" + esc(gm.reputation) + "</strong> (Google Postmaster Tools" + (gm.lastDay ? ", to " + esc(gm.lastDay) : "") + ")."
+      : "Gmail domain reputation unavailable" + (gm && gm.reason ? ": " + esc(gm.reason) : " \u2014 Google Postmaster Tools not configured for this domain.");
+    host.appendChild(
+      el(
+        '<p class="dlv__src">' + srcBits.join(" \u00B7 ") +
+          ". SparkPost rates divide by <em>injections</em> and Airship by <em>sends</em>, so the two figures on a card " +
+          "differ by design \u2014 they are not meant to reconcile. Health Score and inbox/spam placement are not exposed " +
+          "by any API. " + gmTxt + "</p>"
+      )
+    );
+
+    return host;
   }
 
   function kpiPanels(p) {
@@ -1377,7 +2047,7 @@
           '<button class="linkbtn linkbtn--ghost thbtn" type="button" data-project="' + esc(p.name) +
             '" title="Bulk-edit every threshold at once (advanced)">\u2699 Edit all thresholds</button>' +
         "</div>" +
-        '<p class="psection__hint">Every monitored KPI on this project\u2019s active channels \u2014 value, week-over-week evolution, history and a short read \u2014 with its alert threshold inline to compare and adjust on the card.</p>' +
+        '<p class="psection__hint">Every monitored KPI on this project\u2019s active channels \u2014 value, 30-day vs previous-30-day evolution, history and a short read \u2014 with its alert threshold inline to compare and adjust on the card.</p>' +
         '<div class="kpanels"></div>' +
       "</div>"
     );
@@ -1402,39 +2072,71 @@
       if (!list || !list.length) return;
       list.sort(function (a, b) { return familyRank(a) - familyRank(b); });
       var cards = list.map(function (m) { return kpiCard(m, p); }).join("");
-      host.appendChild(
-        el('<section class="kpanel"><header class="kpanel__head">' + esc(grp.label) + "</header>" +
-          '<div class="kpanel__cards">' + cards + "</div></section>")
+      var sec = el(
+        '<section class="kpanel"><header class="kpanel__head">' + esc(grp.label) + "</header>" +
+          '<div class="kpanel__cards">' + cards + "</div></section>"
       );
+      // Everything email lives in ONE place: the SparkPost drill-down is appended
+      // inside the email panel — diagnosis above the cards, provider/reason detail
+      // below them — instead of forming a second, disconnected section.
+      // When per-domain data exists it REPLACES the project-level drill-down
+      // rather than sitting next to it: the project panel would be the largest
+      // domain's numbers under a project heading, which reads as a fleet fact
+      // and is not one. Older snapshots without emailDomains keep the old panel.
+      if (grp.id === "email" && p.emailDomains) decorateEmailDomains(sec, p);
+      else if (grp.id === "email" && p.deliverability) decorateEmailPanel(sec, p.deliverability);
+      host.appendChild(sec);
     });
     return wrap;
   }
+
+  // What ONE point of `series` represents, per family (SKILL.md Step 13). The card
+  // headline is a 30-day window figure while most series are daily, so the chart sits
+  // at roughly a thirtieth of the number printed above it; the convention also differs
+  // between families (rates store daily rates, devices store snapshots).
+  // Surfaced on the card so the chart cannot be misread as contradicting the value.
+  var SERIES_BASIS = {
+    app_opens: "daily points", push_sends: "daily points", email_sends: "daily points",
+    web_sends: "daily points", sms_sends: "daily points", timeinapp: "daily points",
+    optin_optout_ratio: "daily ratio", direct_response_rate: "daily rate",
+    email_deliverability: "daily rate", email_open_rate: "daily rate",
+    email_bounce: "daily rate", email_unsubscribe: "daily points",
+    email_spam_complaint_rate: "daily rate", email_delay_rate: "daily rate",
+    email_hard_bounce_rate: "daily rate", email_block_bounce_rate: "daily rate",
+    email_click_rate: "daily rate", email_ctor: "daily rate", email_unsubscribe_rate: "daily rate",
+    push_pressure_per_user: "rolling 30d, weekly points",
+    total_devices_evolution: "snapshots", devices_optin: "snapshots",
+    devices_uninstall: "snapshots",
+  };
 
   // Per-KPI provenance: which Airship Reports API endpoint feeds the metric and
   // exactly how it is computed. Keyed by metric family (base key without the
   // _ios/_android/_web OS suffix) so it works retroactively on old snapshots
   // without re-running the skill. Mirrors SKILL.md "Data sources" table.
   var KPI_META = {
-    app_opens: { src: "/api/reports/opens", calc: "\u03A3 daily app opens over the 7-day window, per OS (raw count). WoW \u0394% = (current \u2212 previous) \u00F7 previous \u00D7 100." },
-    timeinapp: { src: "/api/reports/timeinapp", calc: "Average time-in-app per day (Airship value), per OS. WoW \u0394% vs the previous 7-day window." },
-    push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 7 days, per OS (raw count). WoW \u0394% vs previous 7 days." },
-    push_pressure_per_user: { src: "/api/reports/sends \u00F7 /api/reports/devices?date=", calc: "Weekly push pressure = push sends (iOS+Android) \u00F7 opted-in devices, per weekly bucket (msg/user/wk). Denominator is the per-week opted-in base via /api/reports/devices?date=<week end> (falls back to the current opted-in snapshot, labelled a proxy, if a week's dated call is unavailable). `series` is the multi-week evolution." },
-    optin_optout_ratio: { src: "/api/reports/optins \u00F7 /api/reports/optouts", calc: "Daily opt-in \u00F7 opt-out ratio, per OS (iOS/Android only \u2014 neither endpoint returns web/SMS series). `series` IS the trend: the daily ratio across the 7-day window (not a separate WoW-only figure). A day with 0 opt-outs is EXCLUDED from the trend average and from `series` (undefined ratio) rather than shown as an artificial spike. WoW \u0394% compares the current window's average ratio to the previous window's. Ratio > 1 = net-positive reach (more opt-ins than opt-outs that day); < 1 = churn-dominant." },
-    direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100, per OS, over the 7-day window. WoW \u0394 in percentage points. Tracking-health signal." },
+    app_opens: { src: "/api/reports/opens", calc: "\u03A3 daily app opens over the 30-day window, per OS (raw count). \u0394% = (current \u2212 previous 30 days) \u00F7 previous \u00D7 100." },
+    timeinapp: { src: "/api/reports/timeinapp", calc: "Average time-in-app per day (Airship value), per OS. \u0394% vs the previous 30-day window." },
+    push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 30 days, per OS (raw count). \u0394% vs the previous 30 days." },
+    push_pressure_per_user: { src: "/api/reports/sends \u00F7 /api/reports/devices?date=", calc: "Push pressure = push sends (iOS+Android) \u00F7 opted-in devices over the 30-day window (msg/user/30d). Denominator is the opted-in base at the window end via /api/reports/devices?date= (falls back to the current opted-in snapshot, labelled a proxy, if the dated call is unavailable). `series` is the rolling 30-day value sampled weekly, so it shares the headline's unit." },
+    optin_optout_ratio: { src: "/api/reports/optins \u00F7 /api/reports/optouts", calc: "Daily opt-in \u00F7 opt-out ratio, per OS (iOS/Android only \u2014 neither endpoint returns web/SMS series). `series` IS the trend: the daily ratio across the 30-day window. A day with 0 opt-outs is EXCLUDED from the trend average and from `series` (undefined ratio) rather than shown as an artificial spike. \u0394% compares the current window's average ratio to the previous window's. Ratio > 1 = net-positive reach (more opt-ins than opt-outs that day); < 1 = churn-dominant." },
+    direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100, per OS, over the 30-day window. \u0394 in percentage points. Tracking-health signal." },
     total_devices_evolution: { src: "/api/reports/devices?date=<start> \u00B7 ?date=<end>", calc: "Total unique-device evolution, per OS + total = % growth/decline between two dated /api/reports/devices calls. GET /api/reports/devices?date=<date-time> counts all device events that occurred before that date-time and returns total_unique_devices + counts.{ios,android,\u2026}.unique_devices; evolution = (end \u2212 start) \u00F7 start \u00D7 100 over the window (start = window start, end = window end / today). Merges the former installs proxy and unique-devices trend into one." },
     devices_optin: { src: "/api/reports/devices?date=", calc: "Opted-in devices two-date evolution, per OS \u2014 the opt-in BASE, not opt-in events (see App & engagement \u2192 Opt-in/opt-out ratio for the event-level signal). \u0394% = change of counts.{os}.opted_in between the window-start and window-end dated calls." },
     devices_uninstall: { src: "/api/reports/devices?date=", calc: "Uninstalled-devices two-date evolution, per OS. \u0394% = change of counts.{os}.uninstalled between the window-start and window-end dated calls (a rise beyond the ceiling alerts)." },
-    email_sends: { src: "/api/reports/sends", calc: "\u03A3 emails sent over 7 days (field `email`). WoW \u0394% vs previous 7 days." },
-    email_deliverability: { src: "/api/reports/events", calc: "Delivered \u00F7 injected \u00D7 100 over the window (absolute rate)." },
-    email_open_rate: { src: "/api/reports/events", calc: "Deduplicated opens (`initial_open`) \u00F7 delivered \u00D7 100. WoW \u0394 in percentage points." },
-    email_bounce: { src: "/api/reports/events", calc: "Bounces \u00F7 injected \u00D7 100 over the window (absolute rate)." },
-    email_unsubscribe: { src: "/api/reports/events", calc: "Email unsubscribes over the window; WoW \u0394% vs the previous 7 days." },
-    email_spam_complaint_rate: { src: "/api/reports/events", calc: "Daily spam_complaint \u00F7 delivery \u00D7 100 (precision=DAILY)." },
-    email_delay_rate: { src: "/api/reports/events", calc: "Hourly delay \u00F7 delivery \u00D7 100 (precision=HOURLY), confirmed over \u2265 N consecutive hours." },
-    web_sends: { src: "/api/reports/sends", calc: "\u03A3 web-push sends over 7 days (field `web`). WoW \u0394% vs previous 7 days." },
-    sms_sends: { src: "/api/reports/sends", calc: "\u03A3 SMS sends over 7 days (field `sms`). WoW \u0394% vs previous 7 days." },
-    sms_delivery_rate: { src: "/api/reports/events", calc: "Delivered \u00F7 dispatched \u00D7 100 (SMS delivery-report events)." },
-    custom_event: { src: "/api/reports/events", calc: "\u03A3 custom-event count over 7 days. WoW \u0394% vs previous 7 days." },
+    email_sends: { src: "/api/reports/sends", calc: "\u03A3 emails sent over 30 days (field `email`). \u0394% vs the previous 30 days." },
+    email_deliverability: { src: "SparkPost Metrics API", calc: "Delivered \u00F7 injected \u00D7 100, per sending domain. The card shows the 30-day rate, but the ALERT is a fast check on the per-day rate over the last few days \u2014 a collapse must not wait for the monthly average to move." },
+    email_open_rate: { src: "SparkPost Metrics API", calc: "Unique confirmed opens \u00F7 delivered \u00D7 100, per sending domain. \u0394 in percentage points vs the previous 30 days." },
+    email_bounce: { src: "SparkPost Metrics API", calc: "Bounces \u00F7 injected \u00D7 100, per sending domain. The card shows the 30-day rate, but the ALERT is a fast check on the per-day rate over the last few days." },
+    email_unsubscribe: { src: "SparkPost Metrics API", calc: "Unsubscribes over the window, per sending domain; \u0394% vs the previous 30 days." },
+    email_spam_complaint_rate: { src: "SparkPost Metrics API", calc: "Daily spam complaints \u00F7 delivered \u00D7 100 (precision=day), per sending domain. Fast check: evaluated per day, never averaged over the window." },
+    email_hard_bounce_rate: { src: "SparkPost Metrics API", calc: "Hard bounces \u00F7 injected \u00D7 100, per sending domain. The address does not exist \u2014 this is the bounce type that gets a sender blocklisted, and the reason total bounce is split apart." },
+    email_block_bounce_rate: { src: "SparkPost Metrics API", calc: "Block bounces \u00F7 injected \u00D7 100, per sending domain. The receiver refused on policy rather than because the address is bad: a reputation signal, not a list-quality one." },
+    email_unsubscribe_rate: { src: "SparkPost Metrics API", calc: "Unsubscribes \u00F7 delivered \u00D7 100. Catches a rate that is high but stable, which the rise-based key never fires on." },
+    email_click_rate: { src: "SparkPost Metrics API", calc: "Unique clicks \u00F7 delivered \u00D7 100, per sending domain." },
+    email_ctor: { src: "SparkPost Metrics API", calc: "Unique clicks \u00F7 unique opens \u00D7 100. Apple Mail Privacy Protection pre-opens messages and inflates open rate; click-to-open is the engagement signal it cannot touch." },
+    email_delay_rate: { src: "SparkPost Metrics API", calc: "Messages deferred on their FIRST attempt \u00F7 injected \u00D7 100 (count_delayed_first), per sending domain \u2014 bounded by 100%, unlike the retry-event ratio it replaced. Fast check on the most recent days." },
+    web_sends: { src: "/api/reports/sends", calc: "\u03A3 web-push sends over 30 days (field `web`). \u0394% vs the previous 30 days." },
+    sms_sends: { src: "/api/reports/sends", calc: "\u03A3 SMS sends over 30 days (field `sms`). \u0394% vs the previous 30 days." },
   };
   // Resolve the KPI family name for a metric key by longest matching family.
   // Canonical metric keys equal the family name exactly (e.g. "app_opens",
@@ -1461,11 +2163,12 @@
     "app_opens", "timeinapp", "optin_optout_ratio",
     "push_sends", "push_pressure_per_user", "direct_response_rate",
     "total_devices_evolution", "devices_optin", "devices_uninstall",
-    "email_sends", "email_deliverability", "email_open_rate", "email_bounce",
+    "email_sends", "email_deliverability", "email_bounce", "email_hard_bounce_rate",
+    "email_block_bounce_rate", "email_open_rate", "email_click_rate", "email_ctor",
+    "email_unsubscribe_rate",
     "email_unsubscribe", "email_spam_complaint_rate", "email_delay_rate",
     "web_sends",
-    "sms_sends", "sms_delivery_rate",
-    "custom_event",
+    "sms_sends",
   ];
   function familyRank(m) {
     var i = FAMILY_ORDER.indexOf(kpiFamily(m && m.key));
@@ -1520,11 +2223,6 @@
         "</div>";
     }
 
-    var watched = watchedMap(p.name, p)[key];
-    var watchBtn = watched
-      ? '<button class="btn btn--sm kthr-unwatch" type="button" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '" title="' + esc("Watching: " + (watched.reason || "manual watch")) + '">\uD83D\uDC41 Watching</button>'
-      : '<button class="btn btn--sm kthr-watch" type="button" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '" title="Manually watch this KPI (surfaced even without a breach)">\uD83D\uDC41 Watch</button>';
-
     return (
       '<div class="kthr" data-project="' + esc(p.name) + '" data-key="' + esc(key) + '"' +
         (def != null ? ' data-default="' + esc(def) + '"' : "") + ">" +
@@ -1538,7 +2236,6 @@
             '<button class="btn btn--sm btn--primary kthr-set" type="button">Set</button>' +
             '<button class="btn btn--sm kthr-reset" type="button" title="Reset to default' +
               (def != null ? " (" + esc(def) + esc(uSuffix) + ")" : "") + '">Reset</button>' +
-            watchBtn +
             badge +
           "</span>" +
         "</div>" +
@@ -1549,7 +2246,7 @@
 
   // Per-KPI analysis sentence: prefer the skill-authored, client-contextualized
   // `analysis`; otherwise fall back to a deterministic one-liner built from the
-  // numbers we already have (WoW direction/magnitude + headroom / breach state).
+  // numbers we already have (30-day direction/magnitude + headroom / breach state).
   function analysisText(m) {
     if (m.analysis && String(m.analysis).trim()) return String(m.analysis).trim();
     return metricAnalysisFallback(m);
@@ -1560,8 +2257,8 @@
     var d = typeof m.deltaPts === "number" ? m.deltaPts : (typeof m.deltaPct === "number" ? m.deltaPct : null);
     var unit = typeof m.deltaPts === "number" ? " pts" : "%";
     if (d != null) {
-      if (d === 0) parts.push("Flat week over week");
-      else parts.push((d > 0 ? "Up" : "Down") + " " + fmt1(Math.abs(d)) + unit + " week over week");
+      if (d === 0) parts.push("Flat vs the previous 30 days");
+      else parts.push((d > 0 ? "Up" : "Down") + " " + fmt1(Math.abs(d)) + unit + " vs the previous 30 days");
     }
     var t = m.threshold;
     if (t) {
@@ -1584,18 +2281,88 @@
     if (!m || !m.key) return [];
     var mk = m.key.toLowerCase().replace(/_rate$/, "");
     var alt = _ALERT_ALT[m.key];
+    var dropOnly = DROP_ONLY_METRICS[m.key];
     return (p.alertsList || []).filter(function (a) {
       if (!a || !a.key) return false;
       var ak = a.key.toLowerCase();
-      return ak.indexOf(mk) !== -1 || (alt && ak.indexOf(alt) !== -1);
+      if (ak.indexOf(mk) === -1 && !(alt && ak.indexOf(alt) !== -1)) return false;
+      // On a volume KPI, only a fall is actionable — a cross-OS gap or a rise
+      // guard reaching this card is noise the TAM cannot do anything with.
+      return dropOnly ? isDropAlertKey(ak) : true;
     });
+  }
+
+  var SOURCE_LABEL = { airship: "Airship", sparkpost: "SparkPost", postmaster: "Postmaster" };
+
+  // Which figure a card leads with. Most KPIs have exactly one source (Airship);
+  // the email family can have two, and then `sources.primary` decides. Airship and
+  // SparkPost measure the same KPI on different denominators — sends vs injections
+  // — so the loser is kept visible rather than dropped, never silently averaged.
+  function primarySource(m) {
+    var s = m.sources;
+    if (!s) return null;
+    var key = s.primary && s[s.primary] ? s.primary : null;
+    if (!key) {
+      key = Object.keys(s).filter(function (k) { return k !== "primary" && k !== "note" && s[k]; })[0] || null;
+    }
+    return key;
+  }
+
+  // The headline figures, taken from the primary source so value, previous and
+  // delta on a card always come from the SAME measurement.
+  function headlineFigures(m) {
+    var key = primarySource(m);
+    var s = key ? m.sources[key] : null;
+    if (!s || typeof s.current !== "number") {
+      return { current: m.current, previous: m.previous, deltaPct: m.deltaPct, deltaPts: m.deltaPts };
+    }
+    return { current: s.current, previous: s.previous, deltaPct: s.deltaPct, deltaPts: s.deltaPts };
+  }
+
+  function sourceChip(m) {
+    var key = primarySource(m);
+    var label = key ? SOURCE_LABEL[key] || key : "Airship";
+    return '<span class="ksrc ksrc--' + esc(key || "airship") + '">' + esc(label) + "</span>";
+  }
+
+  // The non-primary source(s), kept on the card so the same KPI is never shown
+  // twice on the page. Also states which figure the alert threshold runs on,
+  // because that is the Airship one even when SparkPost leads the card.
+  function secondarySources(m) {
+    var key = primarySource(m);
+    if (!key || !m.sources) return "";
+    var bits = Object.keys(m.sources)
+      .filter(function (k) { return k !== "primary" && k !== "note" && k !== key && m.sources[k]; })
+      .map(function (k) {
+        var s = m.sources[k];
+        if (typeof s.current !== "number") return "";
+        return (
+          '<span class="kalt__item"><span class="kalt__src">' + esc(SOURCE_LABEL[k] || k) + "</span> " +
+            fmtVal(s.current, m.unit) +
+            (typeof s.previous === "number" ? '<span class="kalt__prev">prev ' + fmtVal(s.previous, m.unit) + "</span>" : "") +
+          "</span>"
+        );
+      })
+      .filter(Boolean);
+    var noteTxt = m.sources.note || "";
+    if (key !== "airship" && m.threshold && typeof m.threshold.headroom === "number") {
+      noteTxt = (noteTxt ? noteTxt + " " : "") + "The alert threshold below is evaluated on the Airship figure.";
+    }
+    if (!bits.length && !noteTxt) return "";
+    return (
+      '<div class="kcard__alt">' +
+        (bits.length ? '<div class="kalt__row">' + bits.join("") + "</div>" : "") +
+        (noteTxt ? '<div class="kalt__note">' + esc(noteTxt) + "</div>" : "") +
+      "</div>"
+    );
   }
 
   function kpiCard(m, p) {
     var t = m.threshold || {};
-    // Per-OS row. Each OS shows its WoW delta chip when a `deltaPct` is present
+    var hl = headlineFigures(m);
+    // Per-OS row. Each OS shows its 30-day delta chip when a `deltaPct` is present
     // (volume/rate KPIs), else its current absolute snapshot `value` (device /
-    // installs snapshots that have no computable D-7 delta this run). Includes
+    // device snapshots with only one dated call this run). Includes
     // web when the metric carries it.
     var osHtml = "";
     if (m.os) {
@@ -1620,12 +2387,13 @@
     var sparkHtml;
     if (series.length >= 2) {
       var seriesAttr = esc(encodeURIComponent(JSON.stringify(fullSeries)));
+      var basisTxt = SERIES_BASIS[kpiFamily(m.key)] || "";
       sparkHtml =
         '<button class="kcard__spark kcard__spark-expand" type="button"' +
           ' data-series="' + seriesAttr + '" data-label="' + esc(m.label || m.key) + '" data-unit="' + esc(m.unit || "") + '"' +
           ' title="Expand interactive chart" aria-label="Expand history chart for ' + esc(m.label || m.key) + '">' +
           lineSparkline(series, 150, 30) +
-          '<span class="kcard__spark-hint">\u2922 expand</span>' +
+          '<span class="kcard__spark-hint">' + (basisTxt ? esc(basisTxt) + " \u00B7 " : "") + "\u2922 expand</span>" +
         "</button>";
     } else {
       sparkHtml = m.status === "na" ? "" : '<div class="kcard__spark kcard__spark--empty">\uD83D\uDCC8 History building\u2026</div>';
@@ -1640,7 +2408,7 @@
           ? (r.deltaPct > 0 ? "up" : r.deltaPct < 0 ? "down" : "flat")
           : "flat";
         var arrow = dir === "up" ? "\u25B2" : dir === "down" ? "\u25BC" : "\u25AC";
-        var deltaTxt = typeof r.deltaPct === "number" ? " (" + arrow + " " + Math.abs(r.deltaPct).toFixed(1) + "% WoW)" : "";
+        var deltaTxt = typeof r.deltaPct === "number" ? " (" + arrow + " " + Math.abs(r.deltaPct).toFixed(1) + "% vs prev 30d)" : "";
         rateHtml =
           '<div class="kcard__rate kcard__rate--' + dir + '">' +
             "Rate/send " + r.current.toFixed(1) + "% " +
@@ -1661,60 +2429,84 @@
           '<div class="kcard__calc">' + esc(meta.calc) + "</div>" +
         "</details>"
       : "";
-    var wKey = m.threshold && m.threshold.key;
-    var watching = wKey ? watchedMap(p.name, p)[wKey] : null;
-    // Inline mute/unmute — mirrors the alertsDetail flow using the first matching
-    // alertsList entry's key so applyMuteLocal updates in-memory state immediately.
-    var alertMatches = alertsForMetric(p, m);
-    var isMuted = m.status === "muted";
-    var isAlertActive = m.status === "confirmed" || m.status === "candidate";
-    var muteHtml = "";
-    if (isMuted) {
+    var wKey = (m.threshold && m.threshold.key) || m.key;
+    var ctx = wKey ? watchedMap(p.name, p)[wKey] : null;
+    var st = metricAlertState(p, m);
+    var alertMatches = st.alerts;
+
+    // Two separate controls, because they answer two different questions.
+    // "Alerts off" is a lasting decision about the guard on this client; "Dismiss"
+    // acknowledges the occurrence in front of you and lets the next one through.
+    var actions = "";
+    if (st.off) {
       var uEntry = alertMatches.filter(function (a) { return a.muted; })[0];
-      var uKey = uEntry ? uEntry.key : (m.threshold && m.threshold.key || m.key);
-      muteHtml = '<button class="mutebtn mutebtn--unmute kcard__mutebtn" type="button"' +
-        ' data-action="unmute" data-project="' + esc(p.name) + '" data-key="' + esc(uKey) + '">Unmute</button>';
-    } else if (isAlertActive) {
-      var mEntry = alertMatches.filter(function (a) { return !a.muted; })[0];
-      var mKey = mEntry ? mEntry.key : (m.threshold && m.threshold.key || m.key);
-      muteHtml = '<button class="mutebtn kcard__mutebtn" type="button"' +
-        ' data-action="mute" data-project="' + esc(p.name) + '" data-key="' + esc(mKey) + '">Mute</button>';
+      actions += '<button class="mutebtn mutebtn--unmute kcard__mutebtn" type="button"' +
+        ' data-action="unmute" data-project="' + esc(p.name) + '" data-key="' +
+        esc(uEntry ? uEntry.key : wKey) + '" title="Turn alerts back on for this KPI">Alerts on</button>';
+    } else {
+      if (st.active.length) {
+        var aEntry = st.active[0];
+        actions += '<button class="mutebtn kcard__mutebtn" type="button" data-action="dismiss-alert"' +
+          ' data-project="' + esc(p.name) + '" data-key="' + esc(aEntry.key) + '"' +
+          ' data-opened="' + esc(aEntry.openedAt || "") + '"' +
+          ' title="Acknowledge this occurrence only \u2014 a new one will be raised again">Dismiss</button>';
+      } else if (st.dismissed.length) {
+        actions += '<button class="mutebtn mutebtn--unmute kcard__mutebtn" type="button" data-action="undismiss-alert"' +
+          ' data-project="' + esc(p.name) + '" data-key="' + esc(st.dismissed[0].key) + '"' +
+          ' title="Bring this alert back">Undismiss</button>';
+      }
+      actions += '<button class="mutebtn kcard__mutebtn" type="button" data-action="mute"' +
+        ' data-project="' + esc(p.name) + '" data-key="' + esc(wKey) + '"' +
+        ' title="Stop alerting on this KPI for this client, for good">Alerts off</button>';
     }
-    // Cause / openedAt from the matching alertsList entry (confirmed, candidate, muted).
-    var causeEntry = isMuted
-      ? alertMatches.filter(function (a) { return a.muted; })[0] || alertMatches[0]
-      : alertMatches.filter(function (a) { return !a.muted; })[0] || alertMatches[0];
+
+    // Cause / openedAt from the alert that actually drives the card.
+    var causeEntry = st.active[0] || st.dismissed[0] ||
+      alertMatches.filter(function (a) { return a.muted; })[0] || alertMatches[0];
     var causeHtml = "";
     if (causeEntry && (causeEntry.cause || causeEntry.note || causeEntry.openedAt)) {
       var causeText = causeEntry.cause || causeEntry.note || "";
-      var muteReasonTxt = causeEntry.muted && causeEntry.reason ? " \u00B7 Muted: " + causeEntry.reason : "";
-      causeHtml = '<div class="kcard__alert-cause">' +
+      var offReasonTxt = st.off && causeEntry.reason ? " \u00B7 Alerts off: " + causeEntry.reason : "";
+      causeHtml = '<div class="kcard__alert-cause' + (st.active.length ? " kcard__alert-cause--live" : "") + '">' +
         (causeEntry.openedAt ? '<span class="kcard__alert-since">Since ' + esc(causeEntry.openedAt) + "</span> " : "") +
         (causeText ? esc(causeText) : "") +
-        (muteReasonTxt ? ' <span class="kcard__mute-reason">' + esc(muteReasonTxt) + "</span>" : "") +
+        (offReasonTxt ? ' <span class="kcard__mute-reason">' + esc(offReasonTxt) + "</span>" : "") +
       "</div>";
     }
-    // Watch chip: reason shown as a visible block below the header row, not just tooltip.
-    var watchChipHtml = watching ? '<span class="mstatus mstatus--watch">\uD83D\uDC41 Watching</span>' : "";
-    var watchReasonHtml = (watching && watching.reason)
-      ? '<div class="kcard__watch-reason">' + esc(watching.reason) + "</div>"
+    // Context: a standing note about what this KPI means for THIS client, kept in
+    // clients.yml so each run reads it back. The chip is the "there is context
+    // here" marker — without it the note reads as an accident of the last run.
+    var ctxChipHtml = '<button class="ctxchip' + (ctx ? " ctxchip--set" : "") + '" type="button"' +
+      ' data-action="context" data-project="' + esc(p.name) + '" data-key="' + esc(wKey) + '"' +
+      ' title="' + esc(ctx ? "Context: " + (ctx.reason || "(no note)") : "Add context for this KPI") + '">' +
+      (ctx ? "\uD83D\uDCCC Context" : "\uFF0B Context") + "</button>";
+    var ctxNoteHtml = (ctx && ctx.reason)
+      ? '<div class="kcard__ctx-note"><strong>Context</strong> ' + esc(ctx.reason) +
+        (ctx.since ? ' <span class="kcard__ctx-since">since ' + esc(ctx.since) + "</span>" : "") + "</div>"
       : "";
     return (
-      '<article class="kcard kcard--' + metricStatus(m).c + (watching ? " kcard--watching" : "") + '">' +
+      '<article class="kcard kcard--' + metricStatus(p, m).c + (ctx ? " kcard--hasctx" : "") + '"' +
+        ' id="' + esc(metricAnchor(m)) + '">' +
+        // Title row carries the label and the status, nothing else. Adding the
+        // context chip and the action buttons here left the identity block with no
+        // room: the label wrapped one word per line and the key fragmented into
+        // "ema il_ ope n_r ate". The controls get their own row below.
         '<div class="kcard__top">' +
-          '<div class="kcard__ident"><span class="kcard__label">' + esc(m.label || m.key) + "</span>" +
-            '<code class="kcard__key">' + esc(m.key) + "</code></div>" +
-          watchChipHtml +
-          statusChip(m) +
-          muteHtml +
+          '<span class="kcard__label">' + esc(m.label || m.key) + "</span>" +
+          statusChip(p, m) +
         "</div>" +
-        watchReasonHtml +
+        '<div class="kcard__toolbar">' +
+          '<code class="kcard__key">' + esc(m.key) + "</code>" + sourceChip(m) +
+          '<span class="kcard__actions">' + ctxChipHtml + actions + "</span>" +
+        "</div>" +
+        ctxNoteHtml +
         causeHtml +
         '<div class="kcard__vals">' +
-          '<span class="kcard__cur">' + fmtVal(m.current, m.unit) + "</span>" +
-          (typeof m.previous === "number" ? '<span class="kcard__prev">prev ' + fmtVal(m.previous, m.unit) + "</span>" : "") +
-          (deltaChip(m) ? '<span class="kcard__wow">WoW ' + deltaChip(m) + "</span>" : "") +
+          '<span class="kcard__cur">' + fmtVal(hl.current, m.unit) + "</span>" +
+          (typeof hl.previous === "number" ? '<span class="kcard__prev">prev ' + fmtVal(hl.previous, m.unit) + "</span>" : "") +
+          (deltaChip(hl) ? '<span class="kcard__delta">vs prev 30d ' + deltaChip(hl) + "</span>" : "") +
         "</div>" +
+        secondarySources(m) +
         rateHtml +
         analysisHtml +
         noteHtml +
@@ -1726,8 +2518,6 @@
       "</article>"
     );
   }
-
-  function alertsTimeline() { return document.createDocumentFragment(); }
 
   // Threshold suggestions that have no matching KPI card this run (so they can't be
   // shown inline). Per-KPI thresholds are now edited inline on each card; this panel
@@ -1829,33 +2619,76 @@
       .then(function () { rerender(); toast("Dismissed suggestion " + key); })
       .catch(function (e) { toast("Error: " + e.message, "danger"); });
   }
-  // Manually watch a KPI (even with no breach), capturing a reason (served: POST;
-  // file://: copy-prompt). The skill echoes watched KPIs in the dashboard.
-  function watchKpi(project, key) {
-    if (!APP.serverMode) { copyModal("Watch KPI \u2014 paste into chat", watchKpiPrompt(project, key, "")); return; }
+  // Context: a standing note explaining what a KPI means for THIS client — a
+  // seasonal send pattern, a known migration, a threshold the client asked for.
+  // It lives in clients.yml, so every later run reads it back instead of the TAM
+  // re-deriving it. Editable and clearable from the same dialog.
+  function onContext(project, key) {
+    var found = findProject(APP.data, project);
+    var existing = (watchedMap(project, found && found.project) || {})[key] || null;
+    var prior = existing ? existing.reason || "" : "";
+    if (!APP.serverMode) { copyModal("Context \u2014 paste into chat", contextPrompt(project, key, prior)); return; }
+    var acts = [
+      { label: existing ? "Save" : "Add context", primary: true, onClick: function (close, dlg, st) {
+        var r = dlg.querySelector("#wReason").value.trim();
+        if (!r) { st.style.color = "var(--danger)"; st.textContent = "Write a note, or use Clear."; return; }
+        st.textContent = "Saving\u2026";
+        api("/api/watch", { project: project, key: key, reason: r })
+          .then(function () { close(); rerender(); toast("Context saved for " + key); })
+          .catch(function (e) { st.style.color = "var(--danger)"; st.textContent = "Error: " + e.message; });
+      } },
+    ];
+    if (existing) {
+      acts.unshift({ label: "Clear", onClick: function (close, dlg, st) {
+        st.textContent = "Clearing\u2026";
+        api("/api/unwatch", { project: project, key: key })
+          .then(function () { close(); rerender(); toast("Context cleared for " + key); })
+          .catch(function (e) { st.style.color = "var(--danger)"; st.textContent = "Error: " + e.message; });
+      } });
+    }
     var m = modal({
-      title: "Watch KPI",
+      title: existing ? "Edit context" : "Add context",
       bodyHtml:
-        '<p class="dialog__hint">Manually watch <code>' + esc(key) + "</code> on <strong>" + esc(project) + "</strong> \u2014 " +
-        "it stays surfaced in the dashboard (with a \u201Cwatching\u201D chip and in the timeline) even when it is not breaching.</p>" +
-        '<label class="fld"><span>Reason</span>' +
-        '<textarea class="dialog__text" id="wReason" rows="3" placeholder="Why keep an eye on this KPI?"></textarea></label>',
+        '<p class="dialog__hint">What should anyone reading <code>' + esc(key) + "</code> on <strong>" + esc(project) +
+        "</strong> know? Kept in <code>clients.yml</code> and read back on every run, so it survives this snapshot.</p>" +
+        '<label class="fld"><span>Context</span>' +
+        '<textarea class="dialog__text" id="wReason" rows="4" placeholder="e.g. sends are seasonal \u2014 two peaks a year around the sales"></textarea></label>' +
+        (existing && existing.since ? '<p class="dialog__hint">Recorded ' + esc(existing.since) + ".</p>" : ""),
+      actions: acts,
+    });
+    if (prior) m.dialog.querySelector("#wReason").value = prior;
+  }
+
+  // Dismiss THIS occurrence. Pinned to the alert's openedAt, so when the alert
+  // resolves and later re-opens the dismissal no longer matches and the card
+  // lights up again. This is the "false positive / threshold just adjusted"
+  // action — turning the guard off for good is a different button.
+  function onDismissAlert(project, key, opened) {
+    if (!APP.serverMode) { copyModal("Dismiss alert \u2014 paste into chat", dismissAlertPrompt(project, key)); return; }
+    var m = modal({
+      title: "Dismiss this alert",
+      bodyHtml:
+        '<p class="dialog__hint">Acknowledge the current <code>' + esc(key) + "</code> alert on <strong>" + esc(project) +
+        "</strong>. It stops counting as open" + (opened ? " (opened " + esc(opened) + ")" : "") +
+        ". If the alert resolves and comes back later, it will be raised again \u2014 use <em>Alerts off</em> " +
+        "to silence the guard for good.</p>" +
+        '<label class="fld"><span>Reason (optional)</span>' +
+        '<textarea class="dialog__text" id="dReason" rows="3" placeholder="e.g. threshold adjusted, expected after the migration"></textarea></label>',
       actions: [
-        { label: "Watch", primary: true, onClick: function (close, dlg, st) {
-          var r = dlg.querySelector("#wReason").value.trim();
+        { label: "Dismiss", primary: true, onClick: function (close, dlg, st) {
           st.textContent = "Saving\u2026";
-          api("/api/watch", { project: project, key: key, reason: r })
-            .then(function () { close(); rerender(); toast("Watching " + key); })
+          api("/api/dismiss-alert", { project: project, key: key, opened: opened || "", reason: dlg.querySelector("#dReason").value.trim() })
+            .then(function () { close(); rerender(); toast("Dismissed " + key); })
             .catch(function (e) { st.style.color = "var(--danger)"; st.textContent = "Error: " + e.message; });
         } },
       ],
     });
+    return m;
   }
-  function unwatchKpi(project, key) {
-    if (!APP.serverMode) { copyModal("Stop watching \u2014 paste into chat", unwatchKpiPrompt(project, key)); return; }
-    if (!window.confirm('Stop watching "' + key + '" for ' + project + "?")) return;
-    api("/api/unwatch", { project: project, key: key })
-      .then(function () { rerender(); toast("Stopped watching " + key); })
+  function onUndismissAlert(project, key) {
+    if (!APP.serverMode) { copyModal("Undismiss alert \u2014 paste into chat", undismissAlertPrompt(project, key)); return; }
+    api("/api/undismiss-alert", { project: project, key: key })
+      .then(function () { rerender(); toast("Restored " + key); })
       .catch(function (e) { toast("Error: " + e.message, "danger"); });
   }
 
@@ -2130,6 +2963,21 @@
       });
     });
 
+    // "Needs attention" rows scroll to the KPI card they name. The card is flashed
+    // briefly, because on a long panel a silent scroll leaves the reader hunting
+    // for which of the cards now in view was the one they asked for.
+    root.querySelectorAll("[data-goto]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var target = document.getElementById(b.getAttribute("data-goto"));
+        if (!target) return;
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.classList.remove("kcard--flash");
+        void target.offsetWidth; // restart the animation if the same row is clicked twice
+        target.classList.add("kcard--flash");
+        setTimeout(function () { target.classList.remove("kcard--flash"); }, 1800);
+      });
+    });
+
     // Onboarding: copy the "run the skill" prompt from the sample-data banner.
     var runBtn = root.querySelector("#runPromptBtn");
     if (runBtn) runBtn.addEventListener("click", function () {
@@ -2160,13 +3008,6 @@
     // Dismiss a threshold suggestion (inline card + orphan table).
     root.querySelectorAll(".kthr-dismiss, .th-dismiss").forEach(function (b) {
       b.addEventListener("click", function () { dismissSuggestion(b.getAttribute("data-project"), b.getAttribute("data-key")); });
-    });
-    // Watch / unwatch a KPI (inline card + timeline unwatch).
-    root.querySelectorAll(".kthr-watch").forEach(function (b) {
-      b.addEventListener("click", function () { watchKpi(b.getAttribute("data-project"), b.getAttribute("data-key")); });
-    });
-    root.querySelectorAll(".kthr-unwatch").forEach(function (b) {
-      b.addEventListener("click", function () { unwatchKpi(b.getAttribute("data-project"), b.getAttribute("data-key")); });
     });
     // Click-to-expand the tile sparkline into a large interactive chart.
     root.querySelectorAll(".kcard__spark-expand").forEach(function (b) {
@@ -2238,7 +3079,16 @@
         var key = b.getAttribute("data-key");
         var reason = b.getAttribute("data-reason");
         if (action === "unmute") onUnmute(project, key);
+        else if (action === "dismiss-alert") onDismissAlert(project, key, b.getAttribute("data-opened"));
+        else if (action === "undismiss-alert") onUndismissAlert(project, key);
         else onMute(project, key, reason);
+      });
+    });
+
+    // Context (a standing note on a KPI, kept in clients.yml across runs)
+    root.querySelectorAll(".ctxchip").forEach(function (b) {
+      b.addEventListener("click", function () {
+        onContext(b.getAttribute("data-project"), b.getAttribute("data-key"));
       });
     });
 

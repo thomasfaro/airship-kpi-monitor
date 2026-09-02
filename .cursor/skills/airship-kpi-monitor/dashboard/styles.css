@@ -240,26 +240,6 @@ a:hover {
   font-size: 12.5px;
 }
 
-/* ---------- Callout ---------- */
-.callout {
-  display: flex;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  background: var(--warning-soft);
-  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
-  margin-bottom: 24px;
-  font-size: 14px;
-}
-.callout__icon {
-  font-size: 18px;
-  line-height: 1.3;
-}
-.callout__title {
-  font-weight: 650;
-  margin-bottom: 2px;
-}
-
 /* ---------- Toolbar ---------- */
 .toolbar {
   display: flex;
@@ -431,14 +411,6 @@ a:hover {
   border-left-color: var(--info);
   background: linear-gradient(90deg, var(--info-soft), transparent 40%);
 }
-.proj__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
 .proj__id {
   display: flex;
   align-items: baseline;
@@ -451,12 +423,6 @@ a:hover {
   font-size: 15px;
   letter-spacing: -0.01em;
 }
-.proj__head-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
 .proj__badges {
   display: inline-flex;
   gap: 6px;
@@ -466,46 +432,9 @@ a:hover {
   font-size: 12px;
   white-space: nowrap;
 }
-.proj__body {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-  gap: 18px;
-}
-.proj__col {
-  min-width: 0;
-}
-.proj__label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-  font-weight: 600;
-  margin-bottom: 8px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
-}
 .proj__empty {
   color: var(--text-faint);
   font-size: 13px;
-}
-.proj__trend {
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.trend-list {
-  margin: 0;
-  padding-left: 16px;
-  list-style: disc;
-}
-.trend-list li {
-  margin: 0 0 4px;
-}
-.trend-list li:last-child {
-  margin-bottom: 0;
-}
-.trend-spark {
-  margin-top: 8px;
 }
 
 /* ---------- Pills ---------- */
@@ -593,30 +522,6 @@ a:hover {
   border-radius: 5px;
 }
 .alert__cause,
-.alert__reason {
-  color: var(--text-dim);
-}
-.alert__reason {
-  font-style: italic;
-}
-.alert--muted {
-  opacity: 0.62;
-}
-.alert--muted .alert__key {
-  text-decoration: line-through;
-}
-.mutedpill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--text-faint) 18%, transparent);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
 .mutebtn {
   appearance: none;
   border: 1px solid var(--border-strong);
@@ -685,9 +590,6 @@ a:hover {
   padding: 1px 8px;
   border-radius: 999px;
   white-space: nowrap;
-}
-.alert--muted .age {
-  opacity: 0.85;
 }
 
 /* ---------- Copy-prompt dialog ---------- */
@@ -843,24 +745,6 @@ button.linkbtn {
 .setup {
   margin-top: 28px;
 }
-.setup__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 14px 16px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.setup__head:hover {
-  background: var(--bg-hover);
-}
 .setup__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -966,10 +850,6 @@ button.linkbtn {
   }
   .setup__grid {
     grid-template-columns: 1fr;
-  }
-  .proj__body {
-    grid-template-columns: 1fr;
-    gap: 14px;
   }
 }
 @media (max-width: 560px) {
@@ -1325,14 +1205,6 @@ button.linkbtn {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.proj__sublabel {
-  margin: 12px 0 6px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-  font-weight: 600;
-}
 .cands {
   list-style: none;
   margin: 0;
@@ -1346,30 +1218,6 @@ button.linkbtn {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-}
-.cand__streak {
-  flex-shrink: 0;
-  min-width: 30px;
-  text-align: center;
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
-}
-.cand--danger .cand__streak {
-  background: var(--danger-soft);
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
-}
-.cand--warning .cand__streak {
-  background: var(--warning-soft);
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
 }
 
 /* ---------- Recently resolved log ---------- */
@@ -1596,16 +1444,108 @@ button.linkbtn {
   flex-wrap: wrap;
 }
 
-/* ---------- Project detail: at-a-glance tiles ---------- */
-.glance {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+/* ---------- Project detail: what needs attention ----------
+   Replaces the old counts-only banner. The KPIs in alert are named and linked;
+   the counts move to a quiet second line. */
+.alertboard {
   margin: 18px 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
 }
-.glance .stat {
-  margin: 0;
+.alertboard--hot { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.alertboard__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
 }
+.alertboard--clear .alertboard__head { border-bottom: 0; }
+.alertboard__title { margin: 0; font-size: 14px; font-weight: 700; }
+.alertboard--hot .alertboard__title { color: var(--danger); }
+.alertboard--clear .alertboard__title { color: var(--success); }
+.alertboard__counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
+.alertboard__count.is-hot { color: var(--danger); font-weight: 700; }
+.alertboard__list { display: flex; flex-direction: column; }
+.alertboard__row {
+  display: grid;
+  grid-template-columns: 12px minmax(150px, 220px) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  color: inherit;
+  text-decoration: none;
+}
+.alertboard__list > .alertboard__row:first-child { border-top: 0; }
+/* The row is a <button>: strip the control chrome so it reads as a table row. */
+button.alertboard__row {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  cursor: pointer;
+}
+.alertboard__row:hover { background: color-mix(in srgb, var(--text-faint) 8%, transparent); }
+.alertboard__kpi { font-weight: 650; font-size: 13px; }
+.alertboard__why { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+.alertboard__since { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+@media (max-width: 720px) {
+  .alertboard__row { grid-template-columns: 12px 1fr; }
+  .alertboard__why, .alertboard__since { grid-column: 2; }
+}
+
+/* One dot per KPI in alert on the fleet row. */
+.pdots { display: inline-flex; align-items: center; gap: 3px; margin-right: 2px; }
+.pdots__more { font-size: 11px; color: var(--text-dim); margin-left: 2px; }
+
+/* Context chip: the marker that a KPI carries a standing note. */
+.ctxchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.ctxchip:hover { color: var(--accent); border-color: var(--accent); }
+.ctxchip--set {
+  border-style: solid;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* The left border encodes severity and nothing else. A context note is signalled
+   by the chip, so it tints the card body instead of repainting (and resizing)
+   the one stripe that says whether the KPI is breaching. */
+.kcard--hasctx { background: linear-gradient(to right, color-mix(in srgb, var(--accent) 6%, transparent), transparent 42%), var(--bg-elev-2); }
+/* Flash the card a "Needs attention" row just scrolled to. */
+@keyframes kcardFlash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 65%, transparent); }
+  35%  { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+.kcard--flash { animation: kcardFlash 1.6s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .kcard--flash { animation: none; outline: 2px solid var(--accent); }
+}
+.kcard__ctx-since { color: var(--text-faint); font-style: normal; }
+/* A live alert cause reads as the reason the card is red, not as a footnote. */
+.kcard__alert-cause--live { color: var(--danger); }
+
 .stat--wide {
   grid-column: span 2;
 }
@@ -1635,6 +1575,9 @@ button.linkbtn {
   overflow: hidden;
 }
 .kpanel__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 10px 16px;
   font-size: 12px;
   font-weight: 700;
@@ -1646,7 +1589,9 @@ button.linkbtn {
 }
 .kpanel__cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* 280px left the threshold editor (input + Set + Reset + Watch + badge) and the
+     header competing for the same line. */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
   padding: 12px;
 }
@@ -1671,21 +1616,43 @@ button.linkbtn {
   justify-content: space-between;
   gap: 10px;
 }
-.kcard__ident {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
 .kcard__label {
   font-weight: 640;
   font-size: 14px;
+  /* Claim the row, but yield to the status chip rather than pushing it out. */
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.3;
 }
 .kcard__key {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-faint);
-  word-break: break-all;
+  /* break-all shattered the key mid-word when the header was crowded. On its own
+     row it has the width it needs; break only if a single token still overflows. */
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-width: 0;
+}
+/* Second header row: identity metadata left, controls right, wrapping together
+   so a narrow card stacks them instead of overlapping the title. */
+.kcard__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: -4px;
+}
+.kcard__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.kcard__actions .mutebtn {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .kcard__vals {
   display: flex;
@@ -1704,7 +1671,7 @@ button.linkbtn {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
-.kcard__wow {
+.kcard__delta {
   font-size: 12px;
   color: var(--text-dim);
   margin-left: auto;
@@ -1765,9 +1732,6 @@ button.kcard__spark-expand:focus-visible {
 button.kcard__spark-expand:hover .kcard__spark-hint,
 button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   opacity: 1;
-}
-.kcard--watching {
-  border-left-color: var(--accent);
 }
 /* Per-KPI analysis sentence (skill-authored or deterministic fallback) */
 .kcard__analysis {
@@ -1836,7 +1800,7 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   color: var(--text-faint);
 }
 /* Watch reason: visible text line below the Watching chip in the header row. */
-.kcard__watch-reason {
+.kcard__ctx-note {
   font-size: 12px;
   color: var(--accent);
   font-style: italic;
@@ -1884,7 +1848,7 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   line-height: 1.45;
 }
 
-/* Delta chip (WoW change) */
+/* Delta chip (30d vs previous 30d) */
 .delta {
   display: inline-flex;
   align-items: center;
@@ -2082,26 +2046,11 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
 }
 .linkbtn--ghost:hover { color: var(--text); }
 
-/* ---------- Alerts & timeline blocks ---------- */
-.ptimeline {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.tblock {
-  min-width: 0;
-}
-
 /* ---------- Thresholds & suggestions ---------- */
 .thpanel {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-.thempty {
-  color: var(--success);
-  font-size: 13px;
-  padding: 6px 0;
 }
 .thtable {
   width: 100%;
@@ -2197,9 +2146,6 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   color: var(--success);
   margin-right: 4px;
 }
-.thpanel__foot {
-  padding-top: 4px;
-}
 .btn--sm {
   padding: 4px 10px;
   font-size: 12px;
@@ -2294,33 +2240,486 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   font-size: 11px;
 }
 
-/* ---------- Watched KPIs (manual) — timeline block ---------- */
-.watchlist {
+/* ---------- Per-metric source attribution ---------- */
+/* A KPI can be measured by more than one system (the email family is measured by
+   both Airship and SparkPost). The chip names the source the card leads with; the
+   `kcard__alt` row keeps the other one visible so the same KPI never appears
+   twice on the page. */
+.ksrc {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 5px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.ksrc--sparkpost {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.kcard__alt {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+}
+.kalt__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.kalt__src {
+  font-weight: 700;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.kalt__prev {
+  margin-left: 6px;
+  color: var(--text-faint);
+}
+.kalt__note {
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+/* ---------- Email deliverability (SparkPost) ---------- */
+.dlv__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
+.dlv-dom {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  color: var(--text);
+}
+.dlv__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+.dlv__findings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 0;
+}
+.dlv-find {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  padding: 11px 14px;
+}
+.dlv-find--danger {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+.dlv-find--warning {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+.dlv-find--success {
+  border-left-color: var(--success);
+  background: var(--success-soft);
+}
+.dlv-find--info {
+  border-left-color: var(--info);
+  background: var(--info-soft);
+}
+.dlv-find__title {
+  font-weight: 650;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.dlv-find__body {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.dlv-panel {
+  background: var(--bg-elev-2);
+}
+.dlv-panel h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+.dlv-tblwrap {
+  overflow-x: auto;
+}
+.dlv-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.dlv-tbl th {
+  text-align: right;
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 0 0 7px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.dlv-tbl th:first-child,
+.dlv-tbl th:nth-child(2) {
+  text-align: left;
+}
+.dlv-tbl td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dlv-tbl tr:last-child td {
+  border-bottom: none;
+}
+.dlv-prov {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  padding-right: 14px !important;
+}
+.dlv-share {
+  width: 30%;
+  min-width: 130px;
+  padding-right: 16px !important;
+}
+.dlv-share__txt {
+  margin-left: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.dlv-bar {
+  display: inline-block;
+  vertical-align: middle;
+  width: 58%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elev-2);
+  overflow: hidden;
+}
+.dlv-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.dlv-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding-left: 14px !important;
+  /* Right-aligned figures sit flush against whatever follows them, so the gap
+     has to come from this side. */
+  padding-right: 14px !important;
+  white-space: nowrap;
+}
+.dlv-num--plain {
+  color: var(--text-dim);
+}
+.dlv-num--ok {
+  color: var(--success);
+}
+.dlv-num--warn {
+  color: var(--warning);
+  font-weight: 600;
+}
+.dlv-num--bad {
+  color: var(--danger);
+  font-weight: 680;
+}
+
+/* Per-sending-domain table. Sits above the provider drill-down: the domain is
+   the unit a TAM can act on (rotate it, warm it, split it), the provider is not. */
+.dlv-panel--domains .dlv-lead {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+.dlv-panel--domains .dlv-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.dlv-score {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* Exposure is stated, not judged — shared can outperform dedicated. */
+.dlv-ip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--border);
+}
+.dlv-ip--shared {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  cursor: help;
+}
+.dlv-idle td {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Placement risk sits beside the sender score because the two answer different
+   questions: the score says the mail was accepted, the chip says whether it was
+   likely seen. A domain can be 100/100 and still be filtering to spam. */
+.dlv-risk {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+}
+.dlv-risk--high {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  cursor: help;
+}
+.dlv-risk--watch {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  cursor: help;
+}
+.dlv-risk--none {
+  color: var(--success, var(--text-dim));
+  border-color: color-mix(in srgb, var(--success, #4c9) 35%, transparent);
+  background: color-mix(in srgb, var(--success, #4c9) 8%, transparent);
+}
+.dlv-riskline {
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  border: 1px solid var(--border);
+}
+.dlv-riskline--high {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.dlv-riskline--watch {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+.dlv-riskline code {
+  color: inherit;
+}
+
+/* Deferral cause chips — the classification that makes a delay rate readable. */
+.dlv-dcls {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+}
+.dlv-dcls--danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.dlv-dcls--warning {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+/* Per-domain drill-down. Collapsed by default past the first: the detail is
+   deep enough that showing every domain at once buries the summary table. */
+.dlv-dd {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.dlv-dd__sum {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.dlv-dd__sum::-webkit-details-marker {
+  display: none;
+}
+.dlv-dd__sum::before {
+  content: "\25B8";
+  color: var(--text-dim);
+  transition: transform 0.15s ease;
+}
+.dlv-dd[open] > .dlv-dd__sum::before {
+  transform: rotate(90deg);
+}
+.dlv-dd__sum:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.dlv-dd__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.dlv-dd__body {
+  padding: 4px 14px 14px;
+  display: grid;
+  gap: 12px;
+}
+.dlv-cls {
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 340px;
+}
+/* `.dlv-tbl th` right-aligns everything past the second column, which is right
+   for rate columns and wrong for the free-text ones the reason tables end with:
+   the header drifts to the far edge, away from the column it labels. */
+.dlv-dd__body .dlv-tbl th:last-child {
+  text-align: left;
+  padding-left: 12px;
+}
+.dlv-dd__body .dlv-tbl td:last-child {
+  padding-left: 12px;
+}
+/* Bounce class sits between a count and a long reason string; targeted by class
+   rather than position, since column 3 is a numeric volume in the other tables. */
+.dlv-bclass {
+  padding-left: 14px !important;
+  text-align: left !important;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.dlv__cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+.dlv-reasons,
+.dlv-classes {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 11px;
 }
-.watchitem {
+.dlv-reasons__head,
+.dlv-classes__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.dlv-reasons__dom,
+.dlv-classes__name {
+  font-weight: 620;
   font-size: 12.5px;
+  color: var(--text);
 }
-.watchitem__eye {
-  font-size: 12px;
-}
-.watchitem__lbl {
+.dlv-reasons__n,
+.dlv-classes__n {
+  margin-left: auto;
+  font-size: 11.5px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.dlv-reason {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: help;
+}
+.dlv-cat {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: var(--bg-elev-2);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+}
+.dlv-cat--warn {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+.dlv-cat--bad {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.dlv-classes__item .dlv-bar {
+  width: 100%;
+}
+.dlv__src {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-faint);
 }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 720px) {
   .phead {
     flex-direction: column;
+  }
+  .dlv__cols {
+    grid-template-columns: 1fr;
   }
   .stat--wide {
     grid-column: span 1;

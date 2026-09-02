@@ -119,8 +119,8 @@ def _project_name_aliases(name):
     """Aliases for matching dashboard project names to clients.yml entries.
 
     The skill often writes dashboard project names as ``{registry name} PROD``
-    while clients.yml may omit the suffix (e.g. ``Burger King FR`` vs
-    ``Burger King FR PROD``). Accept both forms when resolving a project.
+    while clients.yml may omit the suffix (e.g. ``Client Bravo FR`` vs
+    ``Client Bravo FR PROD``). Accept both forms when resolving a project.
     """
     n = (name or "").strip().lower()
     aliases = {n}
@@ -262,6 +262,18 @@ def build_state(doc):
                     "since": str(w.get("since", "")) if w.get("since") else "",
                 }
             )
+        # One-shot acknowledgements. `opened` pins the occurrence, so an alert that
+        # resolves and comes back later is raised again instead of staying silent.
+        dismissed_alerts = []
+        for d in c.get("dismissed_alerts", []) or []:
+            dismissed_alerts.append(
+                {
+                    "key": str(d.get("key", "")),
+                    "opened": str(d.get("opened", "")) if d.get("opened") else "",
+                    "reason": d.get("reason", ""),
+                    "since": str(d.get("since", "")) if d.get("since") else "",
+                }
+            )
         out_clients.append(
             {
                 "name": c.get("name", ""),
@@ -277,6 +289,7 @@ def build_state(doc):
                 "muted_alerts": muted,
                 "dismissed_suggestions": dismissed,
                 "watched_alerts": watched,
+                "dismissed_alerts": dismissed_alerts,
             }
         )
     return {
@@ -562,6 +575,82 @@ def op_unwatch(payload):
         return build_state(doc)
 
 
+def op_dismiss_alert(payload):
+    """Acknowledge ONE occurrence of an alert: `dismissed_alerts: [{key, opened, reason, since}]`.
+
+    Deliberately not a mute. `opened` records the alert's openedAt, and a consumer
+    only treats the alert as dismissed while that date still matches — so an alert
+    that resolves and re-opens weeks later comes back on its own. Muting, by
+    contrast, silences the guard until someone turns it back on.
+    """
+    project = payload.get("project")
+    key = (payload.get("key") or "").strip()
+    opened = (payload.get("opened") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    if not project or not key:
+        raise ApiError("project and key are required")
+    with _LOCK:
+        y, doc = load_doc()
+        c = find_client(doc, project)
+        if c is None:
+            raise ApiError("project not found: %s" % project, 404)
+        lst = c.get("dismissed_alerts")
+        if lst is None:
+            from ruamel.yaml.comments import CommentedSeq
+
+            lst = CommentedSeq()
+            c["dismissed_alerts"] = lst
+        existing = None
+        for item in lst:
+            if str(item.get("key", "")) == key:
+                existing = item
+                break
+        if existing is not None:
+            existing["opened"] = opened
+            if reason:
+                existing["reason"] = reason
+        else:
+            lst.append(
+                _commented_map(
+                    [
+                        ("key", key),
+                        ("opened", opened),
+                        ("reason", reason or "Dismissed from the dashboard"),
+                        ("since", today()),
+                    ]
+                )
+            )
+        save_doc(y, doc)
+        return build_state(doc)
+
+
+def op_undismiss_alert(payload):
+    """Bring a dismissed alert back (idempotent); drops the list when it empties."""
+    project = payload.get("project")
+    key = (payload.get("key") or "").strip()
+    if not project or not key:
+        raise ApiError("project and key are required")
+    with _LOCK:
+        y, doc = load_doc()
+        c = find_client(doc, project)
+        if c is None:
+            raise ApiError("project not found: %s" % project, 404)
+        lst = c.get("dismissed_alerts")
+        if lst:
+            keep = [it for it in lst if str(it.get("key", "")) != key]
+            if keep:
+                from ruamel.yaml.comments import CommentedSeq
+
+                seq = CommentedSeq()
+                for it in keep:
+                    seq.append(it)
+                c["dismissed_alerts"] = seq
+            else:
+                del c["dismissed_alerts"]
+        save_doc(y, doc)
+        return build_state(doc)
+
+
 def _reject_secrets(payload):
     for k in payload.keys():
         if SECRET_RE.search(str(k)):
@@ -662,6 +751,8 @@ ROUTES = {
     "/api/undismiss-suggestion": op_undismiss_suggestion,
     "/api/watch": op_watch,
     "/api/unwatch": op_unwatch,
+    "/api/dismiss-alert": op_dismiss_alert,
+    "/api/undismiss-alert": op_undismiss_alert,
     "/api/client": op_client_upsert,
     "/api/client/delete": op_client_delete,
 }
