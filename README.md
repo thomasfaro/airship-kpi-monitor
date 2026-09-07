@@ -425,9 +425,10 @@ The editor's catalog (`dashboard/thresholds-catalog.js`) mirrors the
 `clients.yml` is **local and gitignored** — the repo never ships or commits it.
 Create your own in the skill folder (`.cursor/skills/airship-kpi-monitor/`)
 using the template below and keep your own clients there. The agent reads your
-local `clients.yml` and runs the full workflow once per selected client,
-sequentially. Your client list never leaves your machine — the repo only
-contains the skill.
+local `clients.yml` and runs the full workflow once per selected client, fetching
+every client in parallel — each project has its own Airship credentials, so
+their rate limits do not interact. Your client list never leaves your machine —
+the repo only contains the skill.
 
 > **Credentials vs routing**: `clients.yml` holds **no secrets** — only routing
 > (MCP server name, Slack channel, region, time zone, industry). OAuth credentials live solely in

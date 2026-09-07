@@ -341,13 +341,49 @@ operate in registry mode:
    for that run.
 
 4. **Run the workflow once per selected client** (the steps included depend on
-   the active **run scope** above), strictly sequentially — finish one client
-   (including Slack posts and canvas update) before starting the next. Never
-   interleave API calls or Slack messages between clients. Always use the
-   `Airship MCP server` from that client's entry so the correct project is
-   queried. For `canvas-only` runs, skip the Slack alert posts and the Cursor
-   canvas (Step 12) as described in **Run scopes**; still run Step 13 so
-   confirmation streaks persist.
+   the active **run scope** above). Always use the `Airship MCP server` from
+   that client's entry so the correct project is queried. For `canvas-only`
+   runs, skip the Slack alert posts and the Cursor canvas (Step 12) as described
+   in **Run scopes**; still run Step 13 so confirmation streaks persist.
+
+   **Concurrency is per phase, and the limit differs because the shared
+   resource differs.** Each phase's cap is set by whatever it contends on, not
+   by a single global number:
+
+   | Phase | Concurrency | What it contends on |
+   |---|---|---|
+   | Airship fetch (Steps 1, 4, 5, 6) | **all clients at once** | nothing — one OAuth app key per project |
+   | SparkPost (Steps 3b + 3e) | **2**, account-wide | one read-only key shared by every client |
+   | Slack, reads and writes (Steps 7, 10, 10b, 11) | **4** | per-method Slack rate limits on one token |
+   | Dashboard (Step 13) | **1**, once, at the end | a single file, and the gate's memory |
+
+   The Airship line is the one that used to say "2". It was raised because the
+   projects are **separate Airship accounts with separate credentials**, so
+   their rate limits do not interact: the only reason for a global cap was
+   `/api/reports/events`, which is no longer called at all (see Step 2). Fan the
+   fetch out one worker per client — in practice, parallel subagents that each
+   own a disjoint set of clients, write their raw payloads to a scratch
+   directory, and report back; the analysis then runs once over all of them, so
+   the gate still sees one coherent snapshot. Measured on this 18-project fleet,
+   six workers of three projects each took 11 minutes of wall clock while each
+   project needs only ~13 calls at 4-6 s, so the run was waiting on its own
+   serialisation rather than on Airship.
+
+   **Treat "all at once" as a starting point, not a measured ceiling.** Each
+   Airship MCP entry is its own `uv run` process, so a large fleet spawns that
+   many interpreters on the TAM's machine. Two failure signatures mean the
+   fan-out is too wide for this machine, and both call for narrowing it rather
+   than retrying: MCP servers that time out on startup, and `429` on a *single*
+   project's calls. A `401 Expired token` is **not** one of them — that is the
+   ordinary stale-token case the retry policy already covers.
+
+   What must stay ordered is *dependency*, not clients. Within one client,
+   Step 8/8a still consume fully-fetched series; across clients, Step 7 reads
+   prior state before any client is processed and Step 13 writes it once after
+   all of them, so no two workers ever touch the gate's memory. Slack messages
+   for one client must still not interleave *with each other* — a canvas
+   rewrite is a read-then-update pair against section IDs that change on every
+   write, so two writers on the same canvas will collide.
 
 5. **Isolate failures**: if one client errors out (MCP unavailable, scope
    issue, etc.), log the error for that client, skip it, and continue with the
@@ -709,6 +745,12 @@ reordered beyond batching independent calls**. Apply these three rules:
      apart share 29 of their 30 days.
    - Keep **dependent** work ordered: Step 8/8a still consume the fully-fetched
      series, and Step 3c only runs for a newly-confirmed delay alert.
+   - **Across clients, fan out too.** Batches A and B are per project, and one
+     project's Airship credentials are independent of every other's, so on a
+     multi-client run issue them for **all clients at once** rather than a
+     client at a time — the per-phase caps and the machine limits to watch are
+     in **Manual multi-client run**, rule 4. SparkPost is the exception that
+     stays at 2: its key is shared account-wide.
 
 The canonical per-step definitions (params, windows, precision) below are
 unchanged — Step 0b only governs **how** their independent calls are grouped.
@@ -774,8 +816,10 @@ Two reasons beyond speed, both of which held up under measurement:
   different stages, so do not try to reconcile them to zero.
 
 If you are ever tempted to bring the endpoint back, budget for it explicitly:
-never issue two `events` range calls concurrently for the same project, and keep
-global client concurrency at 2.
+never issue two `events` range calls concurrently for the same project, and drop
+the Airship fetch fan-out back to 2 clients while it is in use. That cap belongs
+to this endpoint alone — with `events` retired, the fetch runs one worker per
+client (see **Manual multi-client run**, rule 4).
 
 ### Step 3 — SMS *(volume only)*
 

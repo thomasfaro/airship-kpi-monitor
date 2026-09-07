@@ -359,10 +359,28 @@ client-specific axis, which is why both integrations key off it.
   flight). It has no event-name filter and pages at 100 rows, so cost scales
   with the project's total event volume, not with the handful of names actually
   wanted. Consequences: never issue two `events` range calls concurrently for
-  the same project, keep global client concurrency at 2, and treat the Step 3b
-  per-day loop (30 calls/client) as the single biggest lever on wall-clock time.
-  That cost is what retired the endpoint: SparkPost answers the same email
-  questions in ~1.6 s, with a per-domain and per-IP split Airship never offered.
+  the same project, drop the Airship fan-out back to 2 clients while it is in
+  use, and treat the Step 3b per-day loop (30 calls/client) as the single
+  biggest lever on wall-clock time. That cost is what retired the endpoint:
+  SparkPost answers the same email questions in ~1.6 s, with a per-domain and
+  per-IP split Airship never offered.
+- **Concurrency is per phase, because each phase contends on something
+  different.** The old "global client concurrency 2" was a single number
+  standing in for four unrelated limits, and it outlived its only real
+  justification. Airship fetch now runs **one worker per client** — the projects
+  are separate Airship accounts with separate OAuth keys, so their rate limits
+  do not interact, and the cap existed solely to protect `/api/reports/events`,
+  which is no longer called. SparkPost stays at **2** (one read-only key shared
+  by the whole account), Slack writes at **4** (per-method limits on one token),
+  and Step 13 stays a **single writer at the end** — it is the confirmation
+  gate's memory, so two writers would corrupt the streaks. Measured on the
+  2026-09-07 run: six workers of three projects each spent 11 minutes of wall
+  clock on work needing ~13 calls of 4-6 s per project, i.e. the run waited on
+  its own serialisation. Full fan-out is a **starting point, not a measured
+  ceiling** — each MCP entry is its own `uv run` interpreter, so narrow it if
+  servers time out on startup or a single project starts returning `429`. A
+  `401 Expired token` is not that signal; it is the ordinary stale token the
+  retry policy handles.
 - **A family that could not be measured is `na`, and its open alerts freeze.**
   Whenever a source is unavailable — a skipped fetch, a dead integration, a
   domain with no traffic — emit the metric as `na` rather than carrying the last
