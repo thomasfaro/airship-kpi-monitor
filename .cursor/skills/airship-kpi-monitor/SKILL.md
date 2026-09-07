@@ -3601,9 +3601,14 @@ file:
            // `email.sparkpost: true` only — OMIT the whole key otherwise, the panel
            // then does not render. This is where the deep email analysis lives; the
            // Slack canvas stays synthetic and points here.
+           // This block is scoped to the ACTIVE sending domains — `sendingDomain`
+           // is the comma-joined list it actually covers, which is normally fewer
+           // than the declared domains in `emailDomains[]`. The dashboard prints
+           // that scope above the tables, so it must be accurate.
            deliverability: {
-             source: "SparkPost Metrics API", sendingDomain: "<domain scoping the call>",
-             window: "<curr_start> → <curr_end> (<tz>)", fetchedAt: "<run_timestamp>",
+             source: "SparkPost Metrics API",
+             sendingDomain: "<domain>[, <domain> …] — the domains this block covers",
+             window: { start: "<YYYY-MM-DD>", end: "<YYYY-MM-DD>" }, fetchedAt: "<run_timestamp>",
              // Account-wide totals for the window. Denominators are INJECTIONS.
              totals: { injected, delivered, deliveryRate, delayRate, bounceRate, spamRate, openRate },
              // The diagnosis — rendered ABOVE the numbers. 2–4 entries; each must
@@ -3612,10 +3617,30 @@ file:
                            title: "<the conclusion, not the metric>",
                            detail: "<2–3 sentences: evidence, then what it means>" }, … ],
              // Ordered by volume. `share` = provider injections ÷ total × 100.
-             providers: [ { name, share, injected, deliveryRate, delayRate, bounceRate, openRate }, … ],
+             // `openRate` is optional — SparkPost does not break opens down by
+             // mailbox provider, and the dashboard DROPS the column when no row
+             // carries one rather than printing a dash per provider.
+             providers: [ { name, share, injected, deliveryRate, delayRate, bounceRate,
+                            openRate? }, … ],
              // Raw MTA response strings — copy VERBATIM, never paraphrase here.
-             delayReasons: [ { domain, count, reason }, … ],
-             bounceClasses: [ { name, category: "Soft|Hard|Block", count }, … ],
+             // `count_delayed` counts delay EVENTS (a message retried five times
+             // scores five), `count_delayed_first` counts first-attempt deferrals.
+             // Keep both: the first ranks the cost of a reason, the second is what
+             // `delay_rate` divides by. `_dom` names the sending domain of the row.
+             delayReasons: [ { domain, count_delayed, count_delayed_first, reason, _dom }, … ],
+             // SparkPost's own bounce classification, its column names kept as-is.
+             bounceClasses: [ { bounce_class_name, bounce_category_name: "Soft|Hard|Block",
+                                bounce_class_description, count_bounce, _dom }, … ],
+             // The deferral MIX — mandatory whenever `delayReasons` is present. A
+             // delay rate without it is unreadable: the same headline is an
+             // infrastructure incident at `ip_suspended` and list ageing at
+             // `mailbox_full`. `name` is one of the eight documented buckets or
+             // `other`; the dashboard supplies the label and the meaning.
+             deferralClasses: [ { name: "ip_suspended|reputation_spam|reputation_volume|
+                                         throttle_session|mailbox_full|mailbox_inactive|
+                                         dns_unreachable|service_refused|other",
+                                  count, share,
+                                  examples: [ { domain, reason }, … ] }, … ],
              // Step 3d's result, or why it is missing.
              gmailReputation: { reputation: "<HIGH|MEDIUM|LOW|BAD>", lastDay: "<YYYY-MM-DD>" }
                               | { reason: "<why unavailable>" } | omit,

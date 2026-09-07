@@ -2466,11 +2466,26 @@ button.kcard__spark-expand:focus-visible .kcard__spark-hint {
   font-size: 13px;
   color: var(--text);
 }
-.dlv-panel--domains .dlv-hint {
+/* Every hint line, not just the ones in the domains panel: the provider,
+   deferral and reason panels carry one too, and scoping this to one parent left
+   them rendering as default 16px black paragraphs. */
+.dlv-hint {
   margin: 0 0 12px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-dim);
+}
+/* The scope line stands outside any panel and states which sending domains the
+   analysis below is entitled to speak for, so it reads as a caption. */
+.dlv-hint--scope {
+  margin: 16px 0 8px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+.dlv-hint--scope code {
+  font-size: 11px;
 }
 .dlv-score {
   font-weight: 700;

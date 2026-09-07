@@ -348,6 +348,30 @@ client-specific axis, which is why both integrations key off it.
   the wrong branch is a valid branch. The gauge caption looked right only because
   it reads its unit from the catalog instead of the metric. Read units through
   `normUnit()` and never compare `m.unit` to a literal.
+- **The SparkPost drill-down has two homes and two vocabularies — and the sample
+  hid both.** Step 13 writes the deep email analysis to the **project**
+  `deliverability`, while `app.js` had grown a per-domain renderer reading
+  `emailDomains[].deliverability`, a field the spec never defined. An `else if`
+  then let the per-domain table *suppress* the project-level panel, so on every
+  email project the provider split, the deferral mix and the verbatim MTA strings
+  rendered nowhere at all — the data sat in `dashboard-data.js` untouched. It went
+  unnoticed because `dashboard-data.sample.js` is the one snapshot that nests the
+  block per domain: the sample rendered perfectly and the fleet rendered nothing.
+  Underneath sat the same silent-mismatch bug as `unit` and `status`, three times
+  over: `bounceClasses` rows carry `bounce_class_name`/`count_bounce` and a
+  `.name` test dropped **all 70** of them, so an empty panel read as "nothing to
+  report"; `delayReasons` carry `count_delayed`, not `count`, so every count
+  printed blank; and `window` is `{start,end}`, not the string the spec promised,
+  which `esc()` would have rendered as `[object Object]`. Rules now: **both**
+  blocks render (the per-domain table is the unit alerting works on, the
+  drill-down is the only place the provider/reason axes exist), every row is read
+  through a `norm*()` helper that accepts both spellings, a row with no readable
+  label shows as *unnamed* instead of vanishing, and the panel states **which
+  sending domains it covers** — it is scoped to the active ones, so it must never
+  imply it speaks for the idle ones in the table above. Two display corollaries:
+  `count_delayed` counts retry *events*, not messages, and the column says so; and
+  no run emits a per-provider `openRate`, so that column is dropped rather than
+  filled with dashes.
 - **CTOR needs an injection gate, not just a denominator.** Opens and clicks keep
   arriving for mail sent *before* the window, so a domain that injected **zero**
   still returns a denominator and yields a rate out of nothing:

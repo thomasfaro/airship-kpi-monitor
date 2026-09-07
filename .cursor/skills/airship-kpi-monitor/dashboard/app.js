@@ -1982,24 +1982,152 @@
     return '<span class="dlv-bar"><span class="dlv-bar__fill" style="width:' + w.toFixed(1) + '%"></span></span>';
   }
 
+  // The drill-down rows arrive under two spellings: a run passes some of
+  // SparkPost's own column names straight through (`bounce_class_name`,
+  // `count_delayed`) while others are normalised (`name`, `share`). This is the
+  // same class of bug as `unit` and `status`, and it failed the same silent way:
+  // a `.name` test dropped all 70 bounce-class rows in the 2026-09-07 snapshot,
+  // so the panel rendered as "nothing to report" rather than as an error.
+  // Read every field through here and never test a raw spelling.
+  function firstOf(o, names) {
+    for (var i = 0; i < names.length; i++) {
+      var v = o[names[i]];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return undefined;
+  }
+
+  function normProvider(pr) {
+    return {
+      name: firstOf(pr, ["name", "provider"]),
+      share: firstOf(pr, ["share"]),
+      injected: firstOf(pr, ["injected", "count_injected"]),
+      deliveryRate: firstOf(pr, ["deliveryRate", "delivery_rate"]),
+      delayRate: firstOf(pr, ["delayRate", "delay_rate"]),
+      bounceRate: firstOf(pr, ["bounceRate", "bounce_rate"]),
+      openRate: firstOf(pr, ["openRate", "open_rate"]),
+    };
+  }
+
+  function normDelayRow(r) {
+    return {
+      domain: firstOf(r, ["domain"]),
+      // `count_delayed` counts delay EVENTS, not messages: one message retried
+      // five times scores five. That makes it the right figure for "which reason
+      // cost the most retries" and the wrong one for "how many were held up" —
+      // the column heading carries that distinction.
+      events: firstOf(r, ["count_delayed", "count", "events"]),
+      firstAttempt: firstOf(r, ["count_delayed_first"]),
+      reason: firstOf(r, ["reason"]),
+      scope: firstOf(r, ["_dom", "sendingDomain"]),
+      cls: firstOf(r, ["label", "className"]),
+      severity: firstOf(r, ["severity"]),
+    };
+  }
+
+  function normBounceClass(b) {
+    return {
+      name: firstOf(b, ["name", "bounce_class_name"]),
+      category: firstOf(b, ["category", "bounce_category_name"]),
+      count: firstOf(b, ["count", "count_bounce"]),
+      share: firstOf(b, ["share"]),
+      description: firstOf(b, ["description", "bounce_class_description"]),
+      scope: firstOf(b, ["_dom", "sendingDomain"]),
+    };
+  }
+
+  // The eight documented deferral buckets, plus the catch-all the run emits when
+  // no string matched. The label and the meaning are presentation, not data: the
+  // same headline delay rate demands opposite responses depending on which
+  // bucket carries it, which is the whole reason the mix is shown at all.
+  var DEFER_META = {
+    ip_suspended: { label: "Sending IP suspended", severity: "danger",
+      meaning: "The receiver stopped accepting from the IP itself. Infrastructure, not list quality \u2014 no list change fixes it." },
+    reputation_spam: { label: "Refused as spam", severity: "danger",
+      meaning: "The receiver named unsolicited mail. A consent and content problem." },
+    reputation_volume: { label: "Unusual volume or rate", severity: "warning",
+      meaning: "The receiver flagged the sending pattern rather than the content. Pace the send." },
+    throttle_session: { label: "Throttled", severity: "info",
+      meaning: "Rate or session limits. Costs retries and delivers anyway." },
+    mailbox_full: { label: "Mailbox full", severity: "info",
+      meaning: "The recipient is over quota. Costs retries and nothing else; age the address out if it persists." },
+    mailbox_inactive: { label: "Mailbox inactive", severity: "warning",
+      meaning: "The account is dormant or disabled. These become hard bounces \u2014 remove them." },
+    dns_unreachable: { label: "DNS or host unreachable", severity: "warning",
+      meaning: "The receiving domain did not resolve or did not answer. Often a dead domain in the list." },
+    service_refused: { label: "Service refused", severity: "warning",
+      meaning: "The receiver declined the connection without naming reputation." },
+    other: { label: "Unclassified", severity: "info",
+      meaning: "No documented bucket matched the string. Read the verbatim reasons below." },
+  };
+
+  function normDeferClass(c) {
+    var key = String(firstOf(c, ["name", "key", "bucket"]) || "");
+    var meta = DEFER_META[key] || {};
+    var ex = c.examples || [];
+    return {
+      label: firstOf(c, ["label"]) || meta.label || key || "unnamed",
+      severity: firstOf(c, ["severity"]) || meta.severity || "info",
+      meaning: firstOf(c, ["meaning"]) || meta.meaning || "",
+      count: firstOf(c, ["count"]),
+      share: firstOf(c, ["share"]),
+      // The per-domain shape carries `domains[]`; the project shape carries
+      // `examples[]`, whose receiving domains are the half worth showing.
+      domains: c.domains || ex.map(function (e) { return e && e.domain; }).filter(Boolean),
+    };
+  }
+
   // Fold the SparkPost drill-down into the email KPI panel: findings between the
   // panel header and the cards, provider/reason detail after them. The account
   // totals are deliberately NOT rendered as tiles — every one of them already has
   // a KPI card above, where it is shown beside its Airship counterpart.
-  function decorateEmailPanel(sec, d) {
+  // The spec documents `window` as a preformatted string, a run emits
+  // {start,end}. Both reach here, and passing the object to esc() prints
+  // "[object Object]" — a rendered value that looks like a bug report.
+  function dlvWindow(w) {
+    if (!w) return "";
+    if (typeof w === "string") return w;
+    if (w.start && w.end) return w.start + " \u2192 " + w.end;
+    return w.start || w.end || "";
+  }
+
+  function decorateEmailPanel(sec, d, p) {
     var findings = (d.findings || []).filter(function (x) { return x && x.title; });
     var cardsHost = sec.querySelector(".kpanel__cards");
     var head = sec.querySelector(".kpanel__head");
+    var win = dlvWindow(d.window);
 
-    if (d.sendingDomain || d.window) {
+    if (d.sendingDomain || win) {
       var meta = [];
       if (d.sendingDomain) meta.push('<code class="dlv-dom">' + esc(d.sendingDomain) + "</code>");
-      if (d.window) meta.push('<span class="dlv-win">' + esc(d.window) + "</span>");
+      if (win) meta.push('<span class="dlv-win">' + esc(win) + "</span>");
       head.appendChild(el('<span class="dlv__meta">' + meta.join("") + "</span>"));
     }
 
-    // The diagnosis goes first — it is what a TAM opens the page for.
-    if (findings.length) {
+    // This block is one SparkPost pull covering the domains named in
+    // `sendingDomain`, which can be fewer than the project's active domains.
+    // Saying which ones it covers is the difference between a scoped diagnosis
+    // and a project-wide claim it is not entitled to make.
+    var covered = String(d.sendingDomain || "").split(",")
+      .map(function (s) { return s.trim(); }).filter(Boolean);
+    var active = (((p || {}).emailDomains) || [])
+      .filter(function (x) { return x.active; })
+      .map(function (x) { return x.domain; });
+    var missing = active.filter(function (dom) { return covered.indexOf(dom) === -1; });
+    var scopeNote = covered.length
+      ? '<p class="dlv-hint dlv-hint--scope">Deep analysis below is scoped to ' +
+        covered.map(function (c) { return "<code>" + esc(c) + "</code>"; }).join(", ") +
+        (missing.length
+          ? ". It does <strong>not</strong> cover " +
+            missing.map(function (m) { return "<code>" + esc(m) + "</code>"; }).join(", ") +
+            " \u2014 read those in the per-domain table above."
+          : ", every active sending domain on this project.") +
+        " Rates are never averaged across domains; the per-domain table is the unit alerting works on.</p>"
+      : "";
+
+    // The diagnosis goes first — it is what a TAM opens the page for. Skip it if
+    // a per-domain drill-down already rendered the same findings above.
+    if (findings.length && !sec.querySelector(".dlv__findings")) {
       sec.insertBefore(
         el(
           '<div class="dlv__findings">' +
@@ -2021,30 +2149,40 @@
     }
 
     var tail = dlvDetail(d);
-    if (tail) sec.appendChild(tail);
+    if (tail) {
+      if (scopeNote) sec.appendChild(el(scopeNote));
+      sec.appendChild(tail);
+    }
   }
 
   function dlvDetail(d) {
-    var providers = (d.providers || []).filter(function (x) { return x && x.name; });
-    var delays = (d.delayReasons || []).filter(function (x) { return x && x.reason; });
-    var bounces = (d.bounceClasses || []).filter(function (x) { return x && x.name; });
-    if (!providers.length && !delays.length && !bounces.length) return null;
+    var providers = (d.providers || []).filter(Boolean).map(normProvider);
+    var defers = (d.deferralClasses || []).filter(Boolean).map(normDeferClass)
+      .filter(function (c) { return c.count; });
+    var delays = (d.delayReasons || []).filter(Boolean).map(normDelayRow)
+      .filter(function (r) { return r.reason; });
+    var bounces = (d.bounceClasses || []).filter(Boolean).map(normBounceClass)
+      .filter(function (b) { return b.count || b.name; });
+    if (!providers.length && !defers.length && !delays.length && !bounces.length) return null;
 
     var host = el('<div class="dlv__body"></div>');
 
     // Per-provider table — the axis Airship cannot give at all.
     if (providers.length) {
+      // No run emits a per-provider open rate. A column of em-dashes would claim
+      // a measurement that was never taken, so the column goes when it is empty.
+      var hasOpen = providers.some(function (pr) { return pr.openRate != null; });
       var rows = providers
         .map(function (pr) {
           return (
             "<tr>" +
-              '<td class="dlv-prov">' + esc(pr.name) + "</td>" +
+              '<td class="dlv-prov">' + esc(pr.name || "unnamed") + "</td>" +
               '<td class="dlv-share">' + dlvBar(pr.share) + '<span class="dlv-share__txt">' + dlvPct(pr.share, 1) + "</span></td>" +
               '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(pr.injected)) + "</td>" +
               dlvCell("delivery", pr.deliveryRate, 2) +
               dlvCell("delay", pr.delayRate, 2) +
               dlvCell("bounce", pr.bounceRate, 2) +
-              dlvCell("open", pr.openRate, 1) +
+              (hasOpen ? dlvCell("open", pr.openRate, 1) : "") +
             "</tr>"
           );
         })
@@ -2053,11 +2191,44 @@
         el(
           '<section class="panel dlv-panel">' +
             "<h3>By mailbox provider</h3>" +
+            '<p class="dlv-hint">Who is judging this mail. A rate that is fine overall but bad at one ' +
+            "provider is a reputation problem with that provider, not a list problem.</p>" +
             '<div class="dlv-tblwrap"><table class="dlv-tbl">' +
               "<thead><tr>" +
                 "<th>Mailbox provider</th><th>Share of volume</th><th>Injected</th>" +
-                "<th>Delivered</th><th>Delayed</th><th>Bounced</th><th>Opened</th>" +
+                "<th>Delivered</th><th>Delayed</th><th>Bounced</th>" +
+                (hasOpen ? "<th>Opened</th>" : "") +
               "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+          "</section>"
+        )
+      );
+    }
+
+    // The deferral MIX, above the verbatim strings it summarises. Without it a
+    // delay rate is unreadable: the same headline is an infrastructure incident
+    // when it is a suspended IP and list ageing when it is full mailboxes.
+    if (defers.length) {
+      host.appendChild(
+        el(
+          '<section class="panel dlv-panel">' +
+            "<h3>What the deferrals actually were</h3>" +
+            '<p class="dlv-hint">Every deferral string grouped by cause. A full mailbox costs retries and ' +
+            "nothing else; a reputation string or a suspended IP is a different problem with a different " +
+            "fix. The delay rate on its own cannot tell them apart.</p>" +
+            '<div class="dlv-tblwrap"><table class="dlv-tbl">' +
+              "<thead><tr><th>Cause</th><th>Share</th><th>Deferrals</th><th>Receivers</th>" +
+              "<th>What it means</th></tr></thead><tbody>" +
+              defers.map(function (c) {
+                return "<tr>" +
+                  '<td class="dlv-prov"><span class="dlv-dcls dlv-dcls--' + c.severity + '">' +
+                    esc(c.label) + "</span></td>" +
+                  '<td class="dlv-share">' + dlvBar(c.share) +
+                    '<span class="dlv-share__txt">' + dlvPct(c.share, 1) + "</span></td>" +
+                  '<td class="dlv-num dlv-num--plain">' + esc(fmtCount(c.count)) + "</td>" +
+                  '<td class="dlv-cls">' + esc(c.domains.slice(0, 4).join(", ") || "\u2014") + "</td>" +
+                  '<td class="dlv-cls">' + esc(c.meaning) + "</td></tr>";
+              }).join("") +
+            "</tbody></table></div>" +
           "</section>"
         )
       );
@@ -2069,13 +2240,16 @@
       cols +=
         '<section class="panel dlv-panel">' +
           "<h3>Why mail is delayed</h3>" +
+          '<p class="dlv-hint">The remote server\u2019s own words, verbatim. The count is retry ' +
+          "<em>events</em>, not messages \u2014 one message deferred five times scores five, which is why " +
+          "it ranks the cost of a reason and never reads as a volume.</p>" +
           '<ul class="dlv-reasons">' +
             delays
               .map(function (r) {
                 return (
                   '<li class="dlv-reasons__item">' +
                     '<div class="dlv-reasons__head"><span class="dlv-reasons__dom">' + esc(r.domain || "\u2014") + "</span>" +
-                      '<span class="dlv-reasons__n">' + esc(fmtCount(r.count)) + "</span></div>" +
+                      '<span class="dlv-reasons__n">' + esc(fmtCount(r.events)) + "</span></div>" +
                     dlvReason(r.reason) +
                   "</li>"
                 );
@@ -2089,6 +2263,10 @@
       cols +=
         '<section class="panel dlv-panel">' +
           "<h3>Why mail bounces</h3>" +
+          '<p class="dlv-hint">SparkPost\u2019s own classification. <strong>Hard</strong> means the address ' +
+          "does not exist (clean the list); <strong>Soft</strong> is temporary (wait, then age the address " +
+          "out); <strong>Block</strong> means the receiver refused on policy \u2014 a reputation problem no " +
+          "list change fixes.</p>" +
           '<ul class="dlv-classes">' +
             bounces
               .map(function (b) {
@@ -2098,7 +2276,9 @@
                 return (
                   '<li class="dlv-classes__item">' +
                     '<div class="dlv-classes__head">' +
-                      '<span class="dlv-classes__name">' + esc(b.name) + "</span>" +
+                      '<span class="dlv-classes__name"' +
+                        (b.description ? ' title="' + esc(b.description) + '"' : "") + ">" +
+                        esc(b.name || "unnamed") + "</span>" +
                       (b.category ? '<span class="dlv-cat' + (tone ? " dlv-cat--" + tone : "") + '">' + esc(b.category) + "</span>" : "") +
                       '<span class="dlv-classes__n">' + esc(fmtCount(b.count)) + "</span>" +
                     "</div>" +
@@ -2116,7 +2296,7 @@
     var srcBits = [];
     srcBits.push(esc(d.source || "SparkPost Metrics API"));
     if (d.sendingDomain) srcBits.push("scoped to " + esc(d.sendingDomain));
-    if (d.window) srcBits.push(esc(d.window));
+    if (dlvWindow(d.window)) srcBits.push(esc(dlvWindow(d.window)));
     if (d.fetchedAt) srcBits.push("fetched " + esc(d.fetchedAt));
     var gm = d.gmailReputation;
     var gmTxt = gm && gm.reputation
@@ -2174,12 +2354,17 @@
       // Everything email lives in ONE place: the SparkPost drill-down is appended
       // inside the email panel — diagnosis above the cards, provider/reason detail
       // below them — instead of forming a second, disconnected section.
-      // When per-domain data exists it REPLACES the project-level drill-down
-      // rather than sitting next to it: the project panel would be the largest
-      // domain's numbers under a project heading, which reads as a fleet fact
-      // and is not one. Older snapshots without emailDomains keep the old panel.
-      if (grp.id === "email" && p.emailDomains) decorateEmailDomains(sec, p);
-      else if (grp.id === "email" && p.deliverability) decorateEmailPanel(sec, p.deliverability);
+      // BOTH blocks render, because they answer different questions: the
+      // per-domain table is the unit alerting works on, while the drill-down is
+      // the only place the provider split, the deferral mix and the verbatim MTA
+      // strings appear at all. Letting the first suppress the second silently
+      // emptied the deep analysis on every email project — Step 13 writes the
+      // drill-down at project level, and only the sample nests it per domain, so
+      // the sample kept rendering while real snapshots showed nothing.
+      if (grp.id === "email") {
+        if (p.emailDomains) decorateEmailDomains(sec, p);
+        if (p.deliverability) decorateEmailPanel(sec, p.deliverability, p);
+      }
       host.appendChild(sec);
     });
     return wrap;
