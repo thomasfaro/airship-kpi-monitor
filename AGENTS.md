@@ -291,12 +291,44 @@ client-specific axis, which is why both integrations key off it.
  "Watching" cards were rendering as rows under a heading that reads as critical,
  and the row severity came from a separate path (`projAlerts()`) that saw the
  snapshot's own `muted` flag but not the TAM's `clients.yml` mutes — so a project
- could be painted red while displaying no alert. Candidates keep their own card
- status and the separate "N watching" count. Expect the displayed total to be
- **lower than the raw `alertsList` count**: several per-OS alerts collapse onto
- one card (Client Alpha's four `direct_response_*` alerts are one "Click rate" row). The
- invariant to test is that the banner lists exactly the cards whose chip says
- *Alert* — not that it matches `alertsList.length`.
+  could be painted red while displaying no alert. Candidates keep their own card
+  status and the separate "N watching" count. Expect the displayed total to be
+  **lower than the raw `alertsList` count**: several per-OS alerts collapse onto
+  one card (a project's `app_opens_drop_ios` + `app_opens_drop_android` are one
+  "App opens" row). The invariant to test is that the banner lists exactly the
+  cards whose chip says *Alert* — not that it matches `alertsList.length`.
+- **`direct_response_rate` is the one family split into a card per platform** —
+  `direct_response_rate_ios` and `direct_response_rate_android`, each with its
+  own level, delta, series, threshold, status and streak, and **no** `os`
+  object. It was the case that showed why collapsing per-OS alerts onto one card
+  has a limit: the four `direct_response_*` alerts are per-OS, but the card's
+  `headroom` was computed on the **combined** rate, so the margin and the alert
+  measured different things, and the row could not say which platform broke.
+  Worse, the `os` object carried only *deltas*, never levels — the iOS click
+  rate itself was not readable anywhere. Consequences to respect:
+  - Both guards take an optional per-platform override
+    (`direct_response_rate_min_{os}`, `direct_response_collapse_pct_{os}`).
+    Resolution is `custom_thresholds[<key>_{os}]` → `custom_thresholds[<key>]` →
+    default, declared in `thresholds-catalog.js` via an `inherits` field rather
+    than inferred from the `_ios` suffix. **Emit the key that was actually
+    evaluated**, or the dashboard's inline editor edits a guard that did not run.
+  - The UI distinguishes *override* / *inherited* / *default*. An inherited value
+    is not this key's own override: showing it as one would offer a Reset for a
+    decision nobody made and hide that the other platform moves with it.
+  - A mute on the shared key must switch off both platforms — `metricAlertState`
+    walks the inheritance chain, because reading only the card's own key would
+    leave a guard that looks off and behaves on.
+  - Platform scoping is **suffix-only** on metric keys and suffix-or-mid-key on
+    alert keys. `web_sends` and `sms_sends` are channels, not platforms, and a
+    substring test would read them as OS-scoped.
+  - The Slack canvas keeps **one** click-rate row with two columns, and
+    recombines the headline from raw counts (Σ direct ÷ Σ sends), never as the
+    mean of the two rates — same rule as the email domains.
+  - Per-OS thresholds are offered *here* and not on every per-OS family because
+    the Android click-rate median sits above iOS in every vertical of
+    `benchmarks.json` (3.1% vs 2.5% all-verticals, 6.2% vs 3.6% in utility), so
+    one absolute floor is a different guard on each platform — the same
+    objection that retired the absolute `email_ctor_min`.
 - **Turning a guard off and accepting one occurrence are different acts.**
   `muted_alerts` disables the guard on a client until someone re-enables it;
   `dismissed_alerts` accepts the alert in front of you and pins `opened` to its

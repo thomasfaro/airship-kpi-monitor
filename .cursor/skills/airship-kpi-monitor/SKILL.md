@@ -1739,6 +1739,24 @@ optin_optout_ratio_drop_pct: 20  # avg ratio 30d drop > 20% AND within-window tr
 push_sends_drop_pct: 100        # drop > 100% (i.e. zero sends) → alert
 direct_response_rate_min: 0.5   # rate < 0.5% → alert (absolute, current window)
 direct_response_collapse_pct: 40 # 30d drop of direct response RATE ≥ 40% on an OS → likely tracking/SDK issue
+# Both click-rate guards accept a PER-PLATFORM override. When
+# direct_response_rate_min_{os} / direct_response_collapse_pct_{os} is absent
+# from clients.yml the OS inherits the shared key above, so existing overrides
+# keep applying to both platforms and nothing changes until a TAM splits them.
+# Resolution order, per OS: custom_thresholds[<key>_{os}] → custom_thresholds[<key>]
+# → the default above. Emit the key actually used in the metric's threshold.key
+# so the dashboard's editor edits the guard that ran.
+#   Why per-OS is offered here and not on every per-OS family: the Android
+#   click-rate median sits above iOS in every vertical of benchmarks.json
+#   (all_verticals 3.1% vs 2.5%, utility_productivity 6.2% vs 3.6%), so one
+#   absolute floor is a materially different guard on the two platforms — the
+#   same objection that retired the absolute email_ctor_min floor. The collapse
+#   guard splits for a different reason: an SDK or deep-link regression ships
+#   per platform, which is exactly what that guard exists to catch.
+direct_response_rate_min_ios: null      # unset → inherit direct_response_rate_min
+direct_response_rate_min_android: null  # unset → inherit direct_response_rate_min
+direct_response_collapse_pct_ios: null      # unset → inherit direct_response_collapse_pct
+direct_response_collapse_pct_android: null  # unset → inherit direct_response_collapse_pct
 
 # Push pressure per user per 30 days (informational ceiling; family push_pressure_per_user).
 # RENAMED from push_pressure_per_user_max (which was per WEEK) because the unit changed —
@@ -2090,8 +2108,8 @@ the `{os}` suffix (`ios` / `android`; `web` for web push).
 > two rows nobody could act on. The dashboard enforces the same rule when it
 > matches alerts to cards, so a stale snapshot cannot reintroduce a rise alert on
 > these families.
-| `direct_response_low_{os}` | direct_response_rate_{os}_current < direct_response_rate_min |
-| `direct_response_collapse_{os}` | direct_rate_drop_pct_{os} ≥ direct_response_collapse_pct |
+| `direct_response_low_{os}` | direct_response_rate_{os}_current < **direct_response_rate_min_{os}** (falling back to `direct_response_rate_min` when the per-OS key is unset — see the threshold block) |
+| `direct_response_collapse_{os}` | direct_rate_drop_pct_{os} ≥ **direct_response_collapse_pct_{os}** (same fallback) |
 | `optin_optout_ratio_drop_{os}` | optin_optout_ratio_{os}_delta_pct ≤ -optin_optout_ratio_drop_pct **AND** the current window's ratio series is declining (last non-omitted daily ratio < first non-omitted daily ratio) — avoids firing on a single noisy day |
 | `net_optin_negative_{os}` | net_optin_{os}_previous ≥ 0 AND net_optin_{os}_current < 0 |
 | `email_sends_drop` | email_sends_delta_pct ≤ -email_sends_drop_pct |
@@ -3310,10 +3328,18 @@ the very bottom.
    Do not invent. Fixed section and row order, skipping unused channels:
    - `## 📱 App & audience` — `app_opens`, `timeinapp`, `devices_optin`
      (window-end snapshot), `optin_rate`.
-   - `## 🔔 Push` — `push_sends`, `direct_response_rate`, `optin_optout_ratio`,
+   - `## 🔔 Push` — `push_sends`, click rate, `optin_optout_ratio`,
      `push_pressure_per_user` (expressed per **month**, which the 30-day window
      gives directly — no ×4.33 extrapolation any more). Skip the whole section
      when push is unused (email-only projects).
+     **Click rate is ONE row here** even though `metrics[]` now carries two
+     cards (`direct_response_rate_ios` / `_android`): read both and put each
+     platform in its own column, exactly as the other push rows do. Recombine
+     the headline figure from the raw counts (Σ direct ÷ Σ sends), **never** as
+     the mean of the two rates — the platforms have very different send volumes,
+     so a mean would let the smaller one move the number it does not own. A
+     platform that is `na` shows `n/a` in its column and is left out of the
+     headline rather than counted as zero.
    - `## 💬 SMS & web` — `sms_sends`, `web_sends`. Emit
      this section only when at least one is active.
    - Email has its own section and never appears in these tables.
@@ -3445,7 +3471,10 @@ file:
        - `app_opens` / `push_sends` / `email_sends` / `web_sends` / `sms_sends` /
          `timeinapp` → that day's **total** (ios+android[+web/sms] as applicable);
        - `optin_optout_ratio` → that day's **optins ÷ optouts**;
-       - `direct_response_rate` → that day's **direct ÷ sends × 100**;
+       - `direct_response_rate_{os}` → that day's **direct ÷ sends × 100 on that
+         platform** (each card keeps its own series; never share the combined one
+         between the two, which would show both platforms an average neither of
+         them measured);
        - `email_*` rate families → that day's rate;
        - `total_devices_evolution` / `devices_*` → the dated snapshot value;
        - `push_pressure_per_user` → this run's rolling 30-day value (the series
@@ -3514,7 +3543,9 @@ file:
            // and mini-series. Optional but strongly recommended.
            // CANONICAL NAMING (see "Metric family naming" below): `key` is the KPI
            // FAMILY name (app_opens, timeinapp, optin_optout_ratio,
-           // push_sends, push_pressure_per_user, direct_response_rate,
+           // push_sends, push_pressure_per_user,
+           // direct_response_rate_ios + direct_response_rate_android — the one
+           // family split per platform,
            // total_devices_evolution, devices_optin,
            // devices_uninstall, email_sends, email_deliverability, email_open_rate,
            // email_bounce, email_unsubscribe, email_spam_complaint_rate,
@@ -3531,17 +3562,18 @@ file:
                           // Per-OS split — an OBJECT (NOT a scalar, NOT baked into `key`).
                           // REQUIRED on every family that has per-OS data: app_opens,
            // timeinapp, optin_optout_ratio, push_sends,
-           // direct_response_rate, total_devices_evolution,
-           // devices_*. The card
+           // total_devices_evolution, devices_*. The card
                           // renders the split ONLY from this object: it shows each OS's
                           // `deltaPct` chip when present, else its absolute `value`. Use
                           // `deltaPct` for 30-day rate/volume KPIs (incl. rate KPIs like
-                          // direct_response_rate and optin_optout_ratio — per-OS deltaPct,
+                          // optin_optout_ratio — per-OS deltaPct,
                           // and the two-date device evolution families — per-OS deltaPct),
                           // `value` for device snapshots with only one dated call.
                           // Include `web` when that channel is active. Omit/null ONLY for
                           // genuinely channel-wide metrics with no OS breakdown (e.g.
-                          // email/sms/web/custom).
+                          // email/sms/web) AND for the two per-platform click-rate cards
+                          // (direct_response_rate_ios / _android), where the card already
+                          // IS one platform — see "The one split family" below.
                           os: { ios: { deltaPct: <n> | value: <n> }, android: { … }, web: { … } } | null,
                           // Optional per-send RATE object for any raw-count metric that also tracks a rate. Omit if n/a.
                           rate: { current: <n>, previous: <n>, deltaPct: <n> } | { note: "<qualitative>" } | omit,
@@ -3767,7 +3799,8 @@ file:
          - **Dual-guard families → emit the guard that fired.** Several families
            are watched by two thresholds while the card shows one:
            `web_sends` / `sms_sends` (drop **and** rise),
-           `direct_response_rate` (floor **and** collapse),
+           `direct_response_rate_{os}` (floor **and** collapse, each resolved
+           per platform),
            `app_opens` (drop **and** cross-OS gap). When
            the guard that fired is not the one the card carries by default, emit
            **that** guard's `key`/`value`/`kind`/`headroom`/`breaching` instead, so
@@ -3776,15 +3809,15 @@ file:
            `sms_sends_rise`. `net_optin_negative_{os}`
            has no catalog threshold at all — emit it with the `key` omitted rather
            than borrowing an unrelated threshold.
-     - **Metric family naming (canonical — no exceptions).** `metrics[].key` is the
+     - **Metric family naming (canonical).** `metrics[].key` is the
        KPI **family** name, identical to the `KPI_META` key in `app.js` and resolving
        to the catalog thresholds. Emit **exactly one metric per family**; carry the OS
-       breakdown in the `os` OBJECT, **never** in the key.        Do **not** emit
+       breakdown in the `os` OBJECT, **never** in the key. Do **not** emit
        `app_opens_ios`/`app_opens_android`, `time_in_app`,
        `email_bounce_rate`, `web_push_sends`, `email_spam_rate`, or any OS/direction
        suffix — the correct families are:
        `app_opens`, `timeinapp`, `optin_optout_ratio`, `push_sends`,
-       `push_pressure_per_user`, `direct_response_rate`,
+       `push_pressure_per_user`, `direct_response_rate` (**split — see below**),
        `total_devices_evolution`, `devices_optin`,
        `devices_uninstall`, `email_sends`, `email_deliverability`, `email_open_rate`,
        `email_bounce`, `email_unsubscribe`, `email_spam_complaint_rate`,
@@ -3795,13 +3828,51 @@ file:
        `total_devices_evolution` → `total_devices_evolution_drop_pct`;
        `optin_optout_ratio` → `optin_optout_ratio_drop_pct`; `email_bounce` →
        `email_bounce_max`; `email_spam_complaint_rate` → `email_spam_complaint_rate_max`).
+     - **The one split family: `direct_response_rate` emits TWO cards,
+       `direct_response_rate_ios` and `direct_response_rate_android`.** This is the
+       sole exception to the rule above, and it is narrow on purpose. Three
+       things made the combined card unreadable:
+       - Its alerts were **already per-OS** (`direct_response_low_{os}`,
+         `direct_response_collapse_{os}`) while its `headroom` was computed on
+         the combined rate, so the card's margin and its alert measured
+         different things. Four alerts collapsed onto one row and the row could
+         not say which platform broke.
+       - The `os` object carried **only deltas, never levels**, so the iOS click
+         rate itself was not readable anywhere on the dashboard.
+       - The benchmark medians differ per platform in every vertical, so the
+         floor is a different guard on each.
+
+       Emission rules for the two cards:
+       - Each carries its **own** `current` / `previous` / `deltaPts` computed
+         from that platform's own numerator and denominator, its own daily
+         `series`, its own `status`, and its own `threshold` block.
+       - `threshold.key` is the **per-OS** key when `clients.yml` sets it, else
+         the shared key — emit the key that was actually evaluated, so the
+         dashboard's inline editor edits the guard that ran. Never emit a
+         per-OS key while having evaluated the shared one.
+       - Omit the `os` object: the card **is** the platform, and an `os` row
+         inside it would restate the headline.
+       - `label` is `"Click rate (direct) — iOS"` / `"Click rate (direct) — Android"`.
+         Keep the `(direct)` qualifier: the numerator is direct opens, not
+         influenced ones, and dropping it invites the reader to compare this
+         against a whole-of-campaign click rate.
+       - A platform whose sends are below `min_push_sends` is `status:"na"` on
+         its own card; the other platform is still judged normally. Do not let
+         one silent platform withhold the other.
+       - `key` still resolves to the `direct_response_rate` family for
+         provenance and ordering (`kpiFamily()` strips the suffix), so no
+         `KPI_META` or `FAMILY_ORDER` entry is added per platform.
+       The **Slack canvas keeps ONE row** with iOS and Android columns
+       (Step 11). That surface answers "is push healthy?" for the client in one
+       glance, and the per-platform split is a diagnostic the TAM acts on — the
+       same division of labour as the email block.
      - **Coverage map (catalog group → families → section).** For **every actively-used
        channel**, emit **all** its families (healthy = `status:"ok"`, below the
        `min_*` floor = `status:"na"`), each with an `os` object where noted:
        | Section (`group`) | Families to emit (per active channel) | Per-OS `os` object? |
        |---|---|---|
        | `app` | `app_opens`, `timeinapp`, `optin_optout_ratio` | yes (iOS/Android) |
-       | `push` | `push_sends`, `push_pressure_per_user`, `direct_response_rate` | **yes for sends/click rate;** `push_pressure_per_user` is a per-project 30-day figure (no OS object) |
+       | `push` | `push_sends`, `push_pressure_per_user`, `direct_response_rate_ios`, `direct_response_rate_android` | **yes for sends**; the two click-rate cards are each already one platform, so they carry **no** `os` object; `push_pressure_per_user` is a per-project 30-day figure (no OS object) |
        | `acquisition` | `total_devices_evolution`, `devices_optin`, `devices_uninstall` | yes (per-OS `deltaPct` from the two dated calls; `value` when only one dated call; +`web`/`sms` when active) |
        | `email` | `email_sends`, `email_deliverability`, `email_open_rate`, `email_bounce`, `email_unsubscribe`, `email_spam_complaint_rate`, `email_delay_rate` | no (channel-wide) |
        | `web` | `web_sends` | no |

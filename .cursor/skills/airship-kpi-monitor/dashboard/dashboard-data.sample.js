@@ -211,13 +211,17 @@ window.AIRSHIP_KPI_DATA = {
           alertsList: [
             { key: "app_opens_drop_ios", severity: "danger", openedAt: "2026-06-10", cause: "No campaign Jun 17–20" },
             { key: "optin_optout_ratio_drop_ios", severity: "warning", openedAt: "2026-06-18", cause: "Lower acquisition period" },
-            { key: "direct_response_low", severity: "warning", openedAt: "2026-06-16", cause: "Tracking-health signal — verify deep links" },
+            // Per-platform, like every click-rate alert: it lights the iOS card
+            // only, and leaves the Android card green.
+            { key: "direct_response_low_ios", severity: "warning", openedAt: "2026-06-16", cause: "Tracking-health signal — verify iOS deep links" },
           ],
           // Per-KPI depth for the deep project page (click the row → Open details).
           // CANONICAL SHAPE: one metric per KPI FAMILY, OS split in the `os` OBJECT
           // (never baked into `key`). This project shows FULL mobile coverage:
           //   App & engagement → app_opens + timeinapp + optin_optout_ratio
-          //   Push             → push_sends + push_pressure_per_user + direct_response_rate (each with os)
+          //   Push             → push_sends (with os) + push_pressure_per_user
+          //                      + direct_response_rate_ios / _android (one card
+          //                      per platform, the one split family)
           //   Acquisition      → total_devices_evolution + devices_optin + devices_uninstall (two-date evolution)
           metrics: [
             {
@@ -275,17 +279,36 @@ window.AIRSHIP_KPI_DATA = {
                 { t: "2026-06-08", v: 16.3 }, { t: "2026-06-15", v: 17.2 }, { t: "2026-06-22", v: 17.6 },
               ],
             },
+            // Click rate (direct responses ÷ sends) is the ONE family split into a
+            // card per platform. Each card carries its own level, delta, series,
+            // threshold and status, and NO `os` object — the card already is the
+            // platform. Its alerts (direct_response_low_{os},
+            // direct_response_collapse_{os}) were per-OS all along; this is what
+            // makes the card's headroom measure the same thing as its alert.
             {
-              // Click rate (direct responses ÷ sends) — REQUIRES the per-OS `os` object.
-              key: "direct_response_rate", label: "Click rate", group: "push", channel: "push", unit: "%",
-              current: 0.1, previous: 0.6, deltaPts: -0.5,
-              os: { ios: { deltaPct: -78 }, android: { deltaPct: -85 } },
-              threshold: { key: "direct_response_rate_min", value: 0.5, kind: "floor", headroom: -0.4, breaching: true },
+              key: "direct_response_rate_ios", label: "Click rate \u2014 iOS", group: "push", channel: "push", unit: "%",
+              current: 0.12, previous: 0.55, deltaPts: -0.43,
+              // Guard not split in clients.yml, so this platform inherits the shared
+              // `direct_response_rate_min`. Emit the key that was actually evaluated.
+              threshold: { key: "direct_response_rate_min", value: 0.5, kind: "floor", headroom: -0.38, breaching: true },
               status: "confirmed",
-              analysis: "Click rate collapsed to 0.1% (iOS -78% / Android -85% vs prev 30d), below the 0.5% floor - likely a deep-link/tracking-health problem, not audience fatigue.",
+              analysis: "iOS click rate collapsed to 0.12% (-0.43 pts vs prev 30d), below the 0.5% floor, while iOS sends held steady - a deep-link/tracking-health problem on iOS, not audience fatigue.",
               series: [
-                { t: "2026-06-18", v: 0.6 }, { t: "2026-06-19", v: 0.6 }, { t: "2026-06-20", v: 0.5 },
-                { t: "2026-06-21", v: 0.4 }, { t: "2026-06-22", v: 0.2 }, { t: "2026-06-23", v: 0.1 }, { t: "2026-06-24", v: 0.1 },
+                { t: "2026-06-18", v: 0.55 }, { t: "2026-06-19", v: 0.54 }, { t: "2026-06-20", v: 0.42 },
+                { t: "2026-06-21", v: 0.31 }, { t: "2026-06-22", v: 0.18 }, { t: "2026-06-23", v: 0.12 }, { t: "2026-06-24", v: 0.12 },
+              ],
+            },
+            {
+              key: "direct_response_rate_android", label: "Click rate \u2014 Android", group: "push", channel: "push", unit: "%",
+              current: 2.9, previous: 3.05, deltaPts: -0.15,
+              // Split guard: this platform has its own floor in clients.yml, so the
+              // card shows an "override" badge while iOS above shows "inherited".
+              threshold: { key: "direct_response_rate_min_android", value: 1, kind: "floor", headroom: 1.9, breaching: false },
+              status: "ok",
+              analysis: "Android click rate steady at 2.9% (-0.15 pts vs prev 30d), 1.9 pts of headroom before its own floor - the collapse is confined to iOS.",
+              series: [
+                { t: "2026-06-18", v: 3.05 }, { t: "2026-06-19", v: 2.98 }, { t: "2026-06-20", v: 3.11 },
+                { t: "2026-06-21", v: 2.87 }, { t: "2026-06-22", v: 2.92 }, { t: "2026-06-23", v: 2.9 }, { t: "2026-06-24", v: 2.88 },
               ],
             },
             {
@@ -575,17 +598,31 @@ window.AIRSHIP_KPI_DATA = {
                 { t: "2026-06-21", v: 0 }, { t: "2026-06-22", v: 238 }, { t: "2026-06-23", v: 0 }, { t: "2026-06-24", v: 0 },
               ],
             },
+            // A healthy project still gets both platform cards: the split is not
+            // conditional on something being wrong. Older snapshots that predate
+            // the split and carry a single `direct_response_rate` card still
+            // render (the app resolves the family by prefix and such a card keeps
+            // claiming both platforms' alerts) — but a run must not emit one.
             {
-              // Click rate with the required per-OS `os` object.
-              key: "direct_response_rate", label: "Click rate", group: "push", channel: "push", unit: "%",
-              current: 2.4, previous: 2.5, deltaPts: -0.1,
-              os: { ios: { deltaPct: -2 }, android: { deltaPct: -6 } },
-              threshold: { key: "direct_response_rate_min", value: 0.5, kind: "floor", headroom: 1.9, breaching: false },
+              key: "direct_response_rate_ios", label: "Click rate \u2014 iOS", group: "push", channel: "push", unit: "%",
+              current: 2.6, previous: 2.65, deltaPts: -0.05,
+              threshold: { key: "direct_response_rate_min", value: 0.5, kind: "floor", headroom: 2.1, breaching: false },
               status: "ok",
-              analysis: "Direct-open rate 2.4% (iOS 2.6% / Android 2.2%), well above the 0.5% floor - healthy push engagement.",
+              analysis: "iOS click rate 2.6%, flat vs the previous 30 days and above median for the vertical - healthy push engagement.",
               series: [
-                { t: "2026-06-18", v: 2.5 }, { t: "2026-06-19", v: 2.5 }, { t: "2026-06-20", v: 2.4 },
-                { t: "2026-06-21", v: 2.5 }, { t: "2026-06-22", v: 2.4 }, { t: "2026-06-23", v: 2.4 }, { t: "2026-06-24", v: 2.4 },
+                { t: "2026-06-18", v: 2.65 }, { t: "2026-06-19", v: 2.7 }, { t: "2026-06-20", v: 2.55 },
+                { t: "2026-06-21", v: 2.62 }, { t: "2026-06-22", v: 2.58 }, { t: "2026-06-23", v: 2.6 }, { t: "2026-06-24", v: 2.61 },
+              ],
+            },
+            {
+              key: "direct_response_rate_android", label: "Click rate \u2014 Android", group: "push", channel: "push", unit: "%",
+              current: 2.2, previous: 2.34, deltaPts: -0.14,
+              threshold: { key: "direct_response_rate_min", value: 0.5, kind: "floor", headroom: 1.7, breaching: false },
+              status: "ok",
+              analysis: "Android click rate 2.2%, down 0.14 pts vs the previous 30 days - below the Android vertical median but far from the floor.",
+              series: [
+                { t: "2026-06-18", v: 2.34 }, { t: "2026-06-19", v: 2.28 }, { t: "2026-06-20", v: 2.19 },
+                { t: "2026-06-21", v: 2.25 }, { t: "2026-06-22", v: 2.15 }, { t: "2026-06-23", v: 2.2 }, { t: "2026-06-24", v: 2.21 },
               ],
             },
             {

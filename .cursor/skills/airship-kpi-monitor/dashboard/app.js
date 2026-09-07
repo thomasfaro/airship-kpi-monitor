@@ -279,7 +279,11 @@
     var offMap = mutedMap(p.name, p);
     var dis = dismissedAlerts(p.name, p);
     var tKey = (m.threshold && m.threshold.key) || m.key;
-    var off = !!(offMap[tKey] || alerts.some(function (a) { return a.muted; }) ||
+    // Muting the shared guard must switch off the platforms that inherit from it.
+    // Reading only the card's own key would leave a per-OS card alerting under a
+    // mute the TAM believes covers the KPI — the guard would look off and behave on.
+    var off = !!(thresholdChain(tKey).some(function (k) { return offMap[k]; }) ||
+      alerts.some(function (a) { return a.muted; }) ||
       alerts.some(function (a) { return offMap[a.key]; }));
     var live = alerts.filter(function (a) { return !a.muted && !offMap[a.key]; });
     var dismissed = live.filter(function (a) { return isDismissed(dis, a); });
@@ -306,19 +310,42 @@
     return { status: status, sev: sev, off: off, active: active, dismissed: dismissed,
       candidates: cands, alerts: alerts, breaching: breaching };
   }
+  // One predicate deciding whether an alert (or candidate) belongs to a metric
+  // card. Alerts and candidates must answer this identically — a breach that
+  // lights a card as "Watching" and then fails to light it as "Alert" once the
+  // gate confirms it would make the confirmation look like a resolution.
+  function _ownsAlert(m) {
+    var os = metricOs(m.key);
+    var base = String(m.key).toLowerCase();
+    // Strip the platform before matching: the alert keys spell the family
+    // (`direct_response_low_ios`), not the card key (`direct_response_rate_ios`).
+    if (os) base = base.slice(0, -(os.length + 1));
+    base = base.replace(/_rate$/, "");
+    var alt = _ALERT_ALT[m.key] || _ALERT_ALT[base];
+    var dropOnly = DROP_ONLY_METRICS[m.key] || DROP_ONLY_METRICS[base];
+    return function (a) {
+      if (!a || !a.key) return false;
+      var ak = String(a.key).toLowerCase();
+      if (ak.indexOf(base) === -1 && !(alt && ak.indexOf(alt) !== -1)) return false;
+      // A per-platform card owns its own platform's alerts and nothing else.
+      // An alert naming no platform belongs to the family as a whole, so it
+      // shows on both cards rather than being dropped by a card that is more
+      // specific than the alert.
+      if (os) {
+        var ao = alertOs(ak);
+        if (ao && ao !== os) return false;
+      }
+      // On a volume KPI, only a fall is actionable — a cross-OS gap or a rise
+      // guard reaching this card is noise the TAM cannot do anything with.
+      if (dropOnly && !isDropAlertKey(ak)) return false;
+      return true;
+    };
+  }
   // Candidate breaches waiting on the confirmation gate, matched to a metric the
   // same way alerts are.
   function candidatesForMetric(p, m) {
     if (!m || !m.key) return [];
-    var mk = m.key.toLowerCase().replace(/_rate$/, "");
-    var alt = _ALERT_ALT[m.key];
-    var dropOnly = DROP_ONLY_METRICS[m.key];
-    return (p.candidatesList || []).filter(function (a) {
-      if (!a || !a.key) return false;
-      var ak = a.key.toLowerCase();
-      if (ak.indexOf(mk) === -1 && !(alt && ak.indexOf(alt) !== -1)) return false;
-      return dropOnly ? isDropAlertKey(ak) : true;
-    });
+    return (p.candidatesList || []).filter(_ownsAlert(m));
   }
   // Every metric currently raising an alert, worst first. This is the list both
   // the project banner and the fleet row are built from, so a dot on the list page
@@ -455,6 +482,74 @@
     var cat = window.AIRSHIP_KPI_THRESHOLDS || { items: [] };
     var items = cat.items || [];
     for (var i = 0; i < items.length; i++) if (items[i].key === key) return items[i];
+    return null;
+  }
+  // Some guards exist per platform (`direct_response_rate_min_ios`) on top of a
+  // shared key (`direct_response_rate_min`), and stay unset until a TAM wants the
+  // two platforms guarded differently. The chain is declared in the catalog via
+  // `inherits` rather than inferred from the `_ios`/`_android` suffix, so that
+  // reading it never depends on a naming convention holding.
+  function thresholdChain(key) {
+    var chain = [];
+    var k = key;
+    while (k && chain.indexOf(k) === -1) {
+      chain.push(k);
+      var it = catalogItem(k);
+      k = (it && it.inherits) || null;
+    }
+    return chain;
+  }
+  // The value actually in force for `key` on this project, and where it came from.
+  // An inherited value is NOT this key's own override: presenting it as one would
+  // offer a "Reset" for something that was never set here, and would hide the fact
+  // that editing it splits the two platforms apart for the first time.
+  function effectiveThreshold(project, key, runValue) {
+    var ov = serverOverrides(project);
+    var chain = thresholdChain(key);
+    for (var i = 0; i < chain.length; i++) {
+      if (ov[chain[i]] != null) {
+        return { value: ov[chain[i]], own: i === 0, inheritedFrom: i === 0 ? null : chain[i], isOverride: true };
+      }
+    }
+    for (var j = 0; j < chain.length; j++) {
+      var it = catalogItem(chain[j]);
+      if (it && it.default != null) {
+        return { value: it.default, own: j === 0, inheritedFrom: j === 0 ? null : chain[j], isOverride: false };
+      }
+    }
+    return { value: runValue, own: true, inheritedFrom: null, isOverride: false };
+  }
+  // The default a "Reset" returns to — the first default in the chain, since
+  // clearing a per-OS override falls back to the shared key, not to nothing.
+  function inheritedDefault(key) {
+    var chain = thresholdChain(key);
+    for (var i = 0; i < chain.length; i++) {
+      var it = catalogItem(chain[i]);
+      if (it && it.default != null) return { value: it.default, from: chain[i], own: i === 0 };
+    }
+    return null;
+  }
+
+  // The platform a key is scoped to, or null for a project-wide key.
+  //
+  // Metric keys carry the OS as a trailing suffix only (`direct_response_rate_ios`);
+  // `web_sends` and `sms_sends` are CHANNELS, not platforms, and must not be read
+  // as OS-scoped — hence suffix-only matching against a closed list.
+  var _OS_NAMES = ["ios", "android", "web"];
+  function metricOs(key) {
+    var k = String(key || "").toLowerCase();
+    for (var i = 0; i < _OS_NAMES.length; i++) {
+      if (k.slice(-(_OS_NAMES[i].length + 1)) === "_" + _OS_NAMES[i]) return _OS_NAMES[i];
+    }
+    return null;
+  }
+  // Alert keys put the OS at the end (`direct_response_low_ios`) or in the middle
+  // (`devices_ios_optin_drop`), so both positions count here.
+  function alertOs(key) {
+    var k = "_" + String(key || "").toLowerCase() + "_";
+    for (var i = 0; i < _OS_NAMES.length; i++) {
+      if (k.indexOf("_" + _OS_NAMES[i] + "_") !== -1) return _OS_NAMES[i];
+    }
     return null;
   }
 
@@ -2070,7 +2165,7 @@
     order.forEach(function (grp) {
       var list = byGroup[grp.id];
       if (!list || !list.length) return;
-      list.sort(function (a, b) { return familyRank(a) - familyRank(b); });
+      list.sort(cardOrder);
       var cards = list.map(function (m) { return kpiCard(m, p); }).join("");
       var sec = el(
         '<section class="kpanel"><header class="kpanel__head">' + esc(grp.label) + "</header>" +
@@ -2119,7 +2214,7 @@
     push_sends: { src: "/api/reports/sends", calc: "\u03A3 push notifications sent over 30 days, per OS (raw count). \u0394% vs the previous 30 days." },
     push_pressure_per_user: { src: "/api/reports/sends \u00F7 /api/reports/devices?date=", calc: "Push pressure = push sends (iOS+Android) \u00F7 opted-in devices over the 30-day window (msg/user/30d). Denominator is the opted-in base at the window end via /api/reports/devices?date= (falls back to the current opted-in snapshot, labelled a proxy, if the dated call is unavailable). `series` is the rolling 30-day value sampled weekly, so it shares the headline's unit." },
     optin_optout_ratio: { src: "/api/reports/optins \u00F7 /api/reports/optouts", calc: "Daily opt-in \u00F7 opt-out ratio, per OS (iOS/Android only \u2014 neither endpoint returns web/SMS series). `series` IS the trend: the daily ratio across the 30-day window. A day with 0 opt-outs is EXCLUDED from the trend average and from `series` (undefined ratio) rather than shown as an artificial spike. \u0394% compares the current window's average ratio to the previous window's. Ratio > 1 = net-positive reach (more opt-ins than opt-outs that day); < 1 = churn-dominant." },
-    direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100, per OS, over the 30-day window. \u0394 in percentage points. Tracking-health signal." },
+    direct_response_rate: { src: "/api/reports/responses", calc: "Click rate = direct responses (push clicks) \u00F7 push sends \u00D7 100 over the 30-day window, on this platform's own numerator and denominator. \u0394 in percentage points. Split into one card per platform because the alerts were already per-OS and the benchmark medians differ between them, so a single combined figure hid the platform that moved. Tracking-health signal: a collapse here with sends unchanged points at the SDK or deep-link handling on this platform, not at engagement." },
     total_devices_evolution: { src: "/api/reports/devices?date=<start> \u00B7 ?date=<end>", calc: "Total unique-device evolution, per OS + total = % growth/decline between two dated /api/reports/devices calls. GET /api/reports/devices?date=<date-time> counts all device events that occurred before that date-time and returns total_unique_devices + counts.{ios,android,\u2026}.unique_devices; evolution = (end \u2212 start) \u00F7 start \u00D7 100 over the window (start = window start, end = window end / today). Merges the former installs proxy and unique-devices trend into one." },
     devices_optin: { src: "/api/reports/devices?date=", calc: "Opted-in devices two-date evolution, per OS \u2014 the opt-in BASE, not opt-in events (see App & engagement \u2192 Opt-in/opt-out ratio for the event-level signal). \u0394% = change of counts.{os}.opted_in between the window-start and window-end dated calls." },
     devices_uninstall: { src: "/api/reports/devices?date=", calc: "Uninstalled-devices two-date evolution, per OS. \u0394% = change of counts.{os}.uninstalled between the window-start and window-end dated calls (a rise beyond the ceiling alerts)." },
@@ -2174,6 +2269,18 @@
     var i = FAMILY_ORDER.indexOf(kpiFamily(m && m.key));
     return i === -1 ? FAMILY_ORDER.length : i;
   }
+  // When a family is split per platform its cards share a family rank, so give
+  // them a fixed order of their own. Leaving it to sort stability would let the
+  // two cards swap places between runs depending on the emit order, and a KPI
+  // that moves around the page is one the reader has to hunt for each time.
+  var _OS_RANK = { ios: 0, android: 1, web: 2 };
+  function osRank(m) {
+    var o = metricOs(m && m.key);
+    return o ? _OS_RANK[o] : -1;
+  }
+  function cardOrder(a, b) {
+    return (familyRank(a) - familyRank(b)) || (osRank(a) - osRank(b));
+  }
 
   // The skill's suggestion for a given threshold key (shown inline on the card).
   function metricSuggestion(p, key) {
@@ -2193,12 +2300,22 @@
     var unit = it && it.unit ? it.unit : "";
     var uSuffix = unit === "pts" ? " pts" : unit === "%" ? "%" : "";
     var ov = serverOverrides(p.name)[key];
-    var def = it && it.default != null ? it.default : null;
-    var effective = ov != null ? ov : (t.value != null ? t.value : def);
+    var eff = effectiveThreshold(p.name, key, t.value);
+    var defInfo = inheritedDefault(key);
+    var def = defInfo ? defInfo.value : null;
+    var effective = eff.value != null ? eff.value : (t.value != null ? t.value : def);
     var kindTxt = t.kind ? esc(t.kind) : "";
+    // Three states, not two. A per-platform guard that has never been set is
+    // showing the shared key's value: calling that an "override" would claim a
+    // decision nobody made, and calling it this key's "default" would hide that
+    // the other platform moves with it until it is set here.
+    var inheritLbl = eff.inheritedFrom ? (catalogItem(eff.inheritedFrom) || {}).label || eff.inheritedFrom : "";
     var badge = ov != null
       ? '<span class="kthr__tag kthr__tag--ov" title="Custom threshold in your clients.yml">override</span>'
-      : '<span class="kthr__tag kthr__tag--def" title="Skill default (no override)">default</span>';
+      : eff.inheritedFrom
+        ? '<span class="kthr__tag kthr__tag--def" title="Not set for this platform \u2014 inheriting ' +
+          esc(inheritLbl) + ', which also guards the other platform. Setting a value here splits them.">inherited</span>'
+        : '<span class="kthr__tag kthr__tag--def" title="Skill default (no override)">default</span>';
 
     var s = metricSuggestion(p, key);
     var dismissed = dismissedSet(p.name, p);
@@ -2234,8 +2351,12 @@
               '" aria-label="Alert threshold for ' + esc(it ? it.label : key) + '" />' +
             (uSuffix ? '<span class="kthr__unit">' + esc(uSuffix.trim()) + "</span>" : "") +
             '<button class="btn btn--sm btn--primary kthr-set" type="button">Set</button>' +
-            '<button class="btn btn--sm kthr-reset" type="button" title="Reset to default' +
-              (def != null ? " (" + esc(def) + esc(uSuffix) + ")" : "") + '">Reset</button>' +
+            '<button class="btn btn--sm kthr-reset" type="button" title="' +
+              esc(defInfo && !defInfo.own
+                ? "Reset \u2014 falls back to " + ((catalogItem(defInfo.from) || {}).label || defInfo.from) +
+                  " (" + def + uSuffix + "), shared with the other platform"
+                : "Reset to default" + (def != null ? " (" + def + uSuffix + ")" : "")) +
+              '">Reset</button>' +
             badge +
           "</span>" +
         "</div>" +
@@ -2279,17 +2400,7 @@
   var _ALERT_ALT = { devices_optin: "optin_drop", devices_uninstall: "uninstall_rise" };
   function alertsForMetric(p, m) {
     if (!m || !m.key) return [];
-    var mk = m.key.toLowerCase().replace(/_rate$/, "");
-    var alt = _ALERT_ALT[m.key];
-    var dropOnly = DROP_ONLY_METRICS[m.key];
-    return (p.alertsList || []).filter(function (a) {
-      if (!a || !a.key) return false;
-      var ak = a.key.toLowerCase();
-      if (ak.indexOf(mk) === -1 && !(alt && ak.indexOf(alt) !== -1)) return false;
-      // On a volume KPI, only a fall is actionable — a cross-OS gap or a rise
-      // guard reaching this card is noise the TAM cannot do anything with.
-      return dropOnly ? isDropAlertKey(ak) : true;
-    });
+    return (p.alertsList || []).filter(_ownsAlert(m));
   }
 
   var SOURCE_LABEL = { airship: "Airship", sparkpost: "SparkPost", postmaster: "Postmaster" };
